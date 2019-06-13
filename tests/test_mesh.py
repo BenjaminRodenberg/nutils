@@ -109,6 +109,8 @@ class rectilinear(TestCase):
 
   def setUp(self):
     super().setUp()
+    if self.method == 'newrectilinear':
+      self.skipTest('between bifurcate and tensorial')
     self.domain, self.geom = getattr(mesh, self.method)([4,5])
 
   def test_volume(self):

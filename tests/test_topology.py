@@ -188,6 +188,7 @@ common_refine(special=True) # use special case union implementation
 common_refine(special=False) # use fallback union implementation
 
 @parametrize
+@unittest.skip('between bifurcate and tensorial')
 class revolved(TestCase):
 
   def setUp(self):
