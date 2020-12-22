@@ -387,7 +387,10 @@ class Topology(types.Singleton):
           while mask.any():
             imax = numpy.argmax([mask[indices].sum() for tail, points, indices in cover])
             tail, points, indices = cover.pop(imax)
-            levels[indices] = levelset.eval(_transforms=(trans + tail,), _points=points, **arguments)
+            leveltrans = trans
+            for item in tail:
+              leveltrans = leveltrans.append(item)
+            levels[indices] = levelset.eval(_transforms=(leveltrans,), _points=points, **arguments)
             mask[indices] = False
           refs.append(ref.trim(levels, maxrefine=maxrefine, ndivisions=ndivisions))
       log.debug('cache', fcache.stats)
@@ -1536,7 +1539,7 @@ class SubsetTopology(Topology):
         if ioppelem == -1:
           # If the edge had no opposite in basetopology then it must already by
           # in baseboundary, so we can use index to locate it.
-          brefs[baseboundary.transforms.index(elemtrans+(edgetrans,))] = edgeref
+          brefs[baseboundary.transforms.index(elemtrans.append(edgetrans))] = edgeref
         else:
           # If the edge did have an opposite in basetopology then there is a
           # possibility this opposite (partially) disappeared, in which case
@@ -1546,14 +1549,14 @@ class SubsetTopology(Topology):
           edgeref -= oppref.edge_refs[ioppedge]
           if edgeref:
             trimmedreferences.append(edgeref)
-            trimmedtransforms.append(elemtrans+(edgetrans,))
-            trimmedopposites.append(self.basetopo.transforms[ioppelem]+(oppref.edge_transforms[ioppedge],))
+            trimmedtransforms.append(elemtrans.append(edgetrans))
+            trimmedopposites.append(self.basetopo.transforms[ioppelem].append(oppref.edge_transforms[ioppedge]))
       # The last edges of newref (beyond the number of edges of the original)
       # cannot have opposites and are added to the trimmed group directly.
       for edgetrans, edgeref in newref.edges[len(ioppelems):]:
         trimmedreferences.append(edgeref)
-        trimmedtransforms.append(elemtrans+(edgetrans,))
-        trimmedopposites.append(elemtrans+(edgetrans.flipped,))
+        trimmedtransforms.append(elemtrans.append(edgetrans))
+        trimmedopposites.append(elemtrans.append(edgetrans.flipped))
     origboundary = SubsetTopology(baseboundary, brefs)
     if isinstance(self.newboundary, Topology):
       trimmedbrefs = [ref.empty for ref in self.newboundary.references]
@@ -1706,7 +1709,7 @@ class HierarchicalTopology(Topology):
       coarse_indices = tuple(map(indices_per_level[ilevel].pop, reversed(refine[start:stop]-self._offsets[ilevel])))
       coarse_transforms = map(coarse.transforms.__getitem__, coarse_indices)
       coarse_references = map(coarse.references.__getitem__, coarse_indices)
-      fine_transforms = (trans+(ctrans,) for trans, ref in zip(coarse_transforms, coarse_references) for ctrans, cref in ref.children if cref)
+      fine_transforms = (trans.append(ctrans) for trans, ref in zip(coarse_transforms, coarse_references) for ctrans, cref in ref.children if cref)
       indices_per_level[ilevel+1].extend(map(fine.transforms.index, fine_transforms))
     if not indices_per_level[-1]:
       indices_per_level.pop(-1)
@@ -1720,7 +1723,7 @@ class HierarchicalTopology(Topology):
       coarse, fine = fine, fine.refined
       coarse_transforms = map(coarse.transforms.__getitem__, coarse_indices)
       coarse_references = map(coarse.references.__getitem__, coarse_indices)
-      fine_transforms = (trans+(ctrans,) for trans, ref in zip(coarse_transforms, coarse_references) for ctrans, cref in ref.children if cref)
+      fine_transforms = (trans.append(ctrans) for trans, ref in zip(coarse_transforms, coarse_references) for ctrans, cref in ref.children if cref)
       refined_indices_per_level.append(numpy.unique(numpy.fromiter(map(fine.transforms.index, fine_transforms), dtype=int)))
     return HierarchicalTopology(self.basetopo, refined_indices_per_level)
 
@@ -1737,7 +1740,7 @@ class HierarchicalTopology(Topology):
       for index in indices:
         for etrans, eref in level.references[index].edges:
           if eref:
-            trans = level.transforms[index]+(etrans,)
+            trans = level.transforms[index].append(etrans)
             try:
               bindices.append(bindex(trans))
             except ValueError:
@@ -1766,7 +1769,7 @@ class HierarchicalTopology(Topology):
             continue
           for transforms, opposites in to, to[::-1]:
             try:
-              i = transforms.index(trans+(etrans,))
+              i = transforms.index(trans.append(etrans))
             except ValueError:
               continue
             if self.transforms.contains_with_tail(opposites[i]):
@@ -1995,7 +1998,7 @@ class RevolutionTopology(Topology):
   def __init__(self):
     self._root = transform.Identifier(1, 'angle')
     self.boundary = EmptyTopology(1, ndims=0)
-    transforms = transformseq.PlainTransforms([(self._root,)], 1, 1)
+    transforms = transformseq.PlainTransforms([transform.TransformChain(self._root)], 1, 1)
     references = References.uniform(element.RevolutionReference(), 1)
     super().__init__(references, transforms, transforms)
 
@@ -2217,7 +2220,7 @@ class MultipatchTopology(Topology):
   def basis_patch(self):
     'degree zero patchwise discontinuous basis'
 
-    transforms = transformseq.PlainTransforms(tuple((patch.topo.root,) for patch in self.patches), self.ndims, self.ndims)
+    transforms = transformseq.PlainTransforms(tuple(transform.TransformChain(patch.topo.root) for patch in self.patches), self.ndims, self.ndims)
     index = function.transforms_index(transforms)
     coords = function.transforms_coords(transforms, self.ndims)
     return function.DiscontBasis([types.frozenarray(1, dtype=float).reshape(1, *(1,)*self.ndims)]*len(self.patches), index, coords)

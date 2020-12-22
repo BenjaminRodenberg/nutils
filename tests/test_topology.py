@@ -14,14 +14,14 @@ class TopologyAssertions:
     for ielem, ioppelems in enumerate(domain.connectivity):
       for iedge, ioppelem in enumerate(ioppelems):
         etrans, eref = domain.references[ielem].edges[iedge]
-        trans = domain.transforms[ielem] + (etrans,)
+        trans = domain.transforms[ielem].append(etrans)
         if ioppelem == -1:
           index = boundary.transforms.index(trans)
           bmask[index] += 1
         else:
           ioppedge = util.index(domain.connectivity[ioppelem], ielem)
           oppetrans, opperef = domain.references[ioppelem].edges[ioppedge]
-          opptrans = domain.transforms[ioppelem] + (oppetrans,)
+          opptrans = domain.transforms[ioppelem].append(oppetrans)
           try:
             index = interfaces.transforms.index(trans)
           except ValueError:
@@ -268,8 +268,7 @@ class refined(TestCase):
 
   def test_boundary_gradient(self):
     ref = _refined_refs[self.etype]
-    trans = (transform.Identifier(ref.ndims, 'root'),)
-    domain = topology.ConnectedTopology(References.uniform(ref, 1), transformseq.PlainTransforms([trans], ref.ndims, ref.ndims), transformseq.PlainTransforms([trans], ref.ndims, ref.ndims), ((-1,)*ref.nedges,)).refine(self.ref0)
+    domain = topology.ConnectedTopology(References.uniform(ref, 1), transformseq.IdentifierTransforms(ref.ndims, 'root', 1), transformseq.IdentifierTransforms(ref.ndims, 'root', 1), ((-1,)*ref.nedges,)).refine(self.ref0)
     geom = function.rootcoords(ref.ndims)
     basis = domain.basis('std', degree=1)
     u = domain.projection(geom.sum(), onto=basis, geometry=geom, degree=2)
@@ -634,7 +633,7 @@ class common(TestCase):
 
 common(
   'Topology',
-  topo=topology.Topology(References.uniform(element.PointReference(), 1), transformseq.PlainTransforms([(transform.Identifier(0, 'test'),)], 0, 0), transformseq.PlainTransforms([(transform.Identifier(0, 'test'),)], 0, 0)),
+  topo=topology.Topology(References.uniform(element.PointReference(), 1), transformseq.IdentifierTransforms(0, 'test', 1), transformseq.IdentifierTransforms(0, 'test', 1)),
   hasboundary=False)
 common(
   'StructuredTopology:2D',

@@ -592,9 +592,7 @@ class SelectChain(TransformChain):
     super().__init__(args=[EVALARGS])
 
   def evalf(self, evalargs):
-    trans = evalargs['_transforms'][self.n]
-    assert isinstance(trans, tuple)
-    return trans
+    return evalargs['_transforms'][self.n]
 
   @property
   def _node_details(self):
@@ -634,12 +632,11 @@ class SelectBifurcation(TransformChain):
     super().__init__(args=[trans], todim=todim)
 
   def evalf(self, trans):
-    assert isinstance(trans, tuple)
     bf = trans[0]
     from transform import Bifurcate
     assert isinstance(bf, Bifurcate)
     selected = bf.trans1 if self.first else bf.trans2
-    return selected + trans[1:]
+    return selected.extend(trans[1:])
 
 class TransformChainFromTuple(TransformChain):
 
@@ -1502,7 +1499,7 @@ class ApplyTransforms(Array):
     super().__init__(args=[points, trans], shape=points.shape[:-1]+(todim,), dtype=float)
 
   def evalf(self, points, chain):
-    return transform.apply(chain, points)
+    return chain.apply(points)
 
   def _derivative(self, var, seen):
     if isinstance(var, LocalCoords) and len(var) > 0:
@@ -1520,8 +1517,8 @@ class LinearFrom(Array):
     super().__init__(args=[trans], shape=(todim, fromdim), dtype=float)
 
   def evalf(self, chain):
-    assert not chain or chain[0].todim == self.todim
-    return transform.linearfrom(chain, self.fromdim)
+    assert chain.todim == self.todim
+    return chain.linearfrom(self.fromdim)
 
 class Inverse(Array):
   '''
