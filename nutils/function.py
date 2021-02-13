@@ -34,6 +34,40 @@ Shape = Sequence[Union[int, 'Array']]
 DType = Type[Union[bool, int, float]]
 _dtypes = bool, int, float
 
+class Space:
+  '''A (coordinate) space.
+
+  Parameters
+  ----------
+  name : :class:`str`
+      The name of the space.
+  dim : :class:`int`
+      The dimension of the space.
+
+  Attributes
+  ----------
+  name : :class:`str`
+      The name of the space.
+  dim : :class:`int`
+      The dimension of the space.
+  '''
+
+  def __init__(self, name: str, dim: int) -> None:
+    self.name = name
+    self.dim = dim
+
+  def __hash__(self) -> int:
+    return hash((self.name, self.dim))
+
+  def __eq__(self, other) -> bool:
+    return type(self) == type(other) and self.name == other.name and self.dim == other.dim
+
+  def __repr__(self) -> str:
+    return 'Space<{}#{}>'.format(self.name, self.dim)
+
+  def __getnewargs__(self) -> Tuple[str, int]:
+    return self.name, self.dim
+
 class Lowerable(Protocol):
   'Protocol for lowering to :class:`nutils.evaluable.Array`.'
 
