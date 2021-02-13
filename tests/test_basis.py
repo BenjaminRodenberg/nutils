@@ -279,7 +279,7 @@ class unstructured_topology(TestCase):
       root = transform.Identifier(self.ndims, 'test')
       transforms = transformseq.PlainTransforms([transform.TransformChain(root, transform.Square((c[1:]-c[0]).T, c[0])) for c in coords[simplices]], self.ndims, self.ndims)
       domain = topology.SimplexTopology(space, simplices, transforms, transforms)
-      geom = function.rootcoords(self.ndims)
+      geom = function.rootcoords(space)
     else:
       raise NotImplementedError
     self.domain = domain

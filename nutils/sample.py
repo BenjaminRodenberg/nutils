@@ -435,9 +435,11 @@ def _convert(data, inplace=False):
 class _Integral(function.Array):
 
   def __init__(self, integrand: function.Array, sample: Sample) -> None:
+    if len(integrand.spaces) > 1:
+      raise NotImplementedError
     self._integrand = integrand
     self._sample = sample
-    super().__init__(shape=integrand.shape, dtype=float if integrand.dtype in (bool, int) else integrand.dtype)
+    super().__init__(shape=integrand.shape, dtype=float if integrand.dtype in (bool, int) else integrand.dtype, spaces=frozenset(()))
 
   def lower(self, **kwargs) -> evaluable.Array:
     ielem, integrand = self._sample._lower_for_loop(self._integrand, **kwargs)
@@ -447,9 +449,11 @@ class _Integral(function.Array):
 class _AtSample(function.Array):
 
   def __init__(self, func: function.Array, sample: Sample) -> None:
+    if len(func.spaces) > 1:
+      raise NotImplementedError
     self._func = func
     self._sample = sample
-    super().__init__(shape=(sample.points.npoints, *func.shape), dtype=func.dtype)
+    super().__init__(shape=(sample.points.npoints, *func.shape), dtype=func.dtype, spaces=frozenset(()))
 
   def lower(self, **kwargs) -> evaluable.Array:
     ielem, func = self._sample._lower_for_loop(self._func, **kwargs)
@@ -461,7 +465,7 @@ class _Basis(function.Array):
 
   def __init__(self, sample):
     self._sample = sample
-    super().__init__(shape=(sample.npoints,), dtype=float)
+    super().__init__(shape=(sample.npoints,), dtype=float, spaces=frozenset(sample.spaces))
 
   def lower(self, *, transform_chains=(), coordinates=(), **kwargs):
     assert transform_chains and coordinates and len(transform_chains) == len(coordinates)

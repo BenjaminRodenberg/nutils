@@ -24,7 +24,7 @@ if typing.TYPE_CHECKING:
 else:
   Protocol = object
 
-from typing import Tuple, Union, Type, Callable, Sequence, Any, Optional, Iterator, Dict, Mapping, overload, List, Set
+from typing import Tuple, Union, Type, Callable, Sequence, Any, Optional, Iterator, Dict, Mapping, overload, List, Set, FrozenSet, Iterable
 from . import evaluable, numeric, util, expression, types, warnings, debug_flags
 from .transformseq import Transforms
 import builtins, numpy, re, types as builtin_types, itertools, functools, operator, abc, numbers
@@ -110,6 +110,8 @@ class Array(Lowerable, metaclass=_ArrayMeta):
       The shape of the array function.
   dtype : :class:`bool`, :class:`int` or :class:`float`
       The dtype of the array elements.
+  spaces : :class:`frozenset` of :class:`Space`
+      The spaces this array function is defined on.
 
   Attributes
   ----------
@@ -119,6 +121,8 @@ class Array(Lowerable, metaclass=_ArrayMeta):
       The dimension of this array function.
   dtype : :class:`bool`, :class:`int` or :class:`float`
       The dtype of the array elements.
+  spaces : :class:`frozenset` of :class:`Space`
+      The spaces this array function is defined on.
   '''
 
   __array_priority__ = 1. # http://stackoverflow.com/questions/7042496/numpy-coercion-problem-for-left-sided-binary-operator/7057530#7057530
@@ -148,7 +152,7 @@ class Array(Lowerable, metaclass=_ArrayMeta):
       raise ValueError('expected an array with dimension `{}` but got `{}`'.format(ndim, value.ndim))
     return value
 
-  def __init__(self, shape: Shape, dtype: DType) -> None:
+  def __init__(self, shape: Shape, dtype: DType, spaces: FrozenSet[Space]) -> None:
     shape_ = []
     for iaxis, length in enumerate(shape):
       if numeric.isint(length):
@@ -164,6 +168,9 @@ class Array(Lowerable, metaclass=_ArrayMeta):
       shape_.append(length)
     self.shape = tuple(shape_)
     self.dtype = dtype
+    self.spaces = frozenset(spaces)
+    if len(spaces) > 1:
+      raise NotImplementedError('multiple spaces are not yet supported')
 
   def as_evaluable_array(self) -> evaluable.Array:
     return self.lower()
@@ -493,13 +500,13 @@ class _Wrapper(Array):
       dtype = min_dtype
     if force_dtype:
       dtype = force_dtype
-    return cls(lower, *broadcasted, shape=shape, dtype=dtype)
+    return cls(lower, *broadcasted, shape=shape, dtype=dtype, spaces=functools.reduce(operator.or_, (arg.spaces for arg in broadcasted)))
 
-  def __init__(self, lower: Callable[..., evaluable.Array], *args: Lowerable, shape: Shape, dtype: DType) -> None:
+  def __init__(self, lower: Callable[..., evaluable.Array], *args: Lowerable, shape: Shape, dtype: DType, spaces: FrozenSet[Space]) -> None:
     self._lower = lower
     self._args = args
     assert all(hasattr(arg, 'lower') for arg in self._args)
-    super().__init__(shape, dtype)
+    super().__init__(shape, dtype, spaces)
 
   def lower(self, **kwargs: Any) -> evaluable.Array:
     return self._lower(*(arg.lower(**kwargs) for arg in self._args))
@@ -520,7 +527,7 @@ class _Constant(Array):
 
   def __init__(self, value: Any) -> None:
     self._value = types.arraydata(value)
-    super().__init__(self._value.shape, self._value.dtype)
+    super().__init__(self._value.shape, self._value.dtype, frozenset(()))
 
   def lower(self, **kwargs: Any) -> evaluable.Array:
     return _prepend_points(evaluable.Constant(self._value), **kwargs)
@@ -545,7 +552,7 @@ class Argument(Array):
 
   def __init__(self, name: str, shape: Shape, *, dtype: DType = float) -> None:
     self.name = name
-    super().__init__(shape, dtype)
+    super().__init__(shape, dtype, frozenset(()))
 
   def lower(self, **kwargs: Any) -> evaluable.Array:
     shape = tuple(_WithoutPoints(n).lower(**kwargs) if isinstance(n, Array) else n for n in self.shape)
@@ -555,8 +562,9 @@ class _Replace(Array):
 
   def __init__(self, arg: Array, replacements: Dict[str, Array]) -> None:
     self._arg = arg
+    # TODO: verify that the replacements have empty spaces
     self._replacements = replacements
-    super().__init__(arg.shape, arg.dtype)
+    super().__init__(arg.shape, arg.dtype, arg.spaces)
 
   def lower(self, **kwargs: Any) -> evaluable.Array:
     arg = self._arg.lower(**kwargs)
@@ -587,7 +595,7 @@ class _Transpose(Array):
   def __init__(self, arg: Array, axes: Tuple[int, ...]) -> None:
     self._arg = arg
     self._axes = axes
-    super().__init__(tuple(arg.shape[axis] for axis in axes), arg.dtype)
+    super().__init__(tuple(arg.shape[axis] for axis in axes), arg.dtype, arg.spaces)
 
   def lower(self, **kwargs: Any) -> evaluable.Array:
     offset = kwargs['coordinates'][0].ndim-1 if kwargs.get('coordinates', ()) else 0
@@ -598,7 +606,7 @@ class _Opposite(Array):
 
   def __init__(self, arg: Array) -> None:
     self._arg = arg
-    super().__init__(arg.shape, arg.dtype)
+    super().__init__(arg.shape, arg.dtype, arg.spaces)
 
   def lower(self, *, transform_chains: Tuple[evaluable.TransformChain] = (), coordinates: Tuple[evaluable.Array] = (), **kwargs: Any) -> evaluable.Array:
     if len(transform_chains) > 2 or len(coordinates) > 2:
@@ -608,15 +616,16 @@ class _Opposite(Array):
 class _LocalCoords(Array):
 
   def __init__(self, ndims: int) -> None:
-    super().__init__((ndims,), float)
+    super().__init__((ndims,), float, frozenset(()))
 
   def lower(self, **kwargs: Any) -> evaluable.Array:
     raise ValueError('cannot be lowered')
 
 class _RootCoords(Array):
 
-  def __init__(self, ndims: int) -> None:
-    super().__init__((ndims,), float)
+  def __init__(self, space: Space) -> None:
+    self._space = space
+    super().__init__((space.dim,), float, frozenset((space,)))
 
   def lower(self, *, transform_chains: Tuple[evaluable.TransformChain] = (), coordinates: Tuple[evaluable.Array] = (), **kwargs) -> evaluable.Array:
     assert transform_chains and coordinates and len(transform_chains) == len(coordinates)
@@ -624,9 +633,11 @@ class _RootCoords(Array):
 
 class _TransformsIndex(Array):
 
-  def __init__(self, transforms: Transforms) -> None:
+  def __init__(self, spaces: Tuple[Space, ...], transforms: Transforms) -> None:
+    assert tuple(space.dim for space in spaces) == transforms.todims
+    self._spaces = spaces
     self._transforms = transforms
-    super().__init__((), int)
+    super().__init__((), int, frozenset(spaces))
 
   def lower(self, *, transform_chains: Tuple[evaluable.TransformChain] = (), **kwargs: Any) -> evaluable.Array:
     assert transform_chains
@@ -635,9 +646,11 @@ class _TransformsIndex(Array):
 
 class _TransformsCoords(Array):
 
-  def __init__(self, transforms: Transforms, dim: int) -> None:
+  def __init__(self, spaces: Tuple[Space, ...], transforms: Transforms) -> None:
+    assert tuple(space.dim for space in spaces) == transforms.todims
+    self._spaces = spaces
     self._transforms = transforms
-    super().__init__((dim,), int)
+    super().__init__((transforms.fromdim,), int, frozenset(spaces))
 
   def lower(self, *, transform_chains: Tuple[evaluable.TransformChain] = (), coordinates: Tuple[evaluable.Array] = (), **kwargs: Any) -> evaluable.Array:
     assert transform_chains and coordinates and len(transform_chains) == len(coordinates)
@@ -655,7 +668,7 @@ class _Derivative(Array):
       self._eval_var = evaluable.LocalCoords(var.shape[0])
     else:
       raise ValueError('Cannot differentiate `arg` to {!r}.'.format(var))
-    super().__init__(arg.shape+var.shape, arg.dtype)
+    super().__init__(arg.shape+var.shape, arg.dtype, arg.spaces | var.spaces)
 
   def lower(self, **kwargs: Any) -> evaluable.Array:
     arg = self._arg.lower(**kwargs)
@@ -666,7 +679,7 @@ class _Jacobian(Array):
   def __init__(self, geom: Array) -> None:
     assert geom.ndim == 1
     self._geom = geom
-    super().__init__((), float)
+    super().__init__((), float, geom.spaces)
 
   def lower(self, *, coordinates: Tuple[evaluable.Array] = (), **kwargs: Any) -> evaluable.Array:
     assert coordinates
@@ -680,7 +693,7 @@ class _Elemwise(Array):
     self._index = Array.cast(index, dtype=int, ndim=0)
     ndim = self._data[0].ndim if self._data else 0
     shape = tuple(get(numpy.array([d.shape[i] for d in self._data]), 0, index) for i in range(ndim))
-    super().__init__(shape, dtype)
+    super().__init__(shape, dtype, index.spaces)
 
   def lower(self, **kwargs: Any) -> evaluable.Array:
     return _prepend_points(evaluable.Elemwise(self._data, _WithoutPoints(self._index).lower(**kwargs), self.dtype), **kwargs)
@@ -688,7 +701,7 @@ class _Elemwise(Array):
 class RevolutionAngle(Array):
 
   def __init__(self):
-    super().__init__((), float)
+    super().__init__((), float, frozenset(()))
 
   def lower(self, **kwargs: Any) -> evaluable.Array:
     return _prepend_points(evaluable.RevolutionAngle(), **kwargs)
@@ -702,8 +715,9 @@ def _join_lengths(*lengths_: Union[int, Array]) -> Union[int, Array]:
   elif all(isinstance(length, int) for length in lengths):
     raise ValueError('incompatible lengths: {}'.format(','.join(map(str, sorted(lengths)))))
   else:
-    array_lengths = (Array.cast(length, dtype=int, ndim=0) for length in  lengths)
-    return _Wrapper(evaluable.AssertEqual, *array_lengths, shape=(), dtype=int)
+    array_lengths = tuple(Array.cast(length, dtype=int, ndim=0) for length in  lengths)
+    spaces = functools.reduce(operator.or_, (arg.spaces for arg in array_lengths))
+    return _Wrapper(evaluable.AssertEqual, *array_lengths, shape=(), dtype=int, spaces=spaces)
 
 def _broadcast(*args_: IntoArray) -> Tuple[Tuple[Array, ...], Shape, DType]:
   args = tuple(map(Array.cast, args_))
@@ -750,7 +764,7 @@ def zeros(shape: Shape, dtype: DType = float) -> Array:
   :class:`Array`
   '''
 
-  return _Zeros(shape, dtype)
+  return _Zeros(shape, dtype, frozenset(()))
 
 def ones(shape: Shape, dtype: DType = float) -> Array:
   '''Create a new :class:`Array` of given shape and dtype, filled with ones.
@@ -767,7 +781,7 @@ def ones(shape: Shape, dtype: DType = float) -> Array:
   :class:`Array`
   '''
 
-  return _Ones(shape, dtype)
+  return _Ones(shape, dtype, frozenset(()))
 
 def eye(__n, dtype=float):
   '''Create a 2-D :class:`Array` with ones on the diagonal and zeros elsewhere.
@@ -1403,11 +1417,11 @@ def sum(__arg: IntoArray, axis: Optional[Union[int, Sequence[int]]] = None) -> A
   if axis is None:
     if arg.ndim == 0:
       raise ValueError('Cannot sum last axis of 0-D array.')
-    return _Wrapper(evaluable.Sum, arg, shape=arg.shape[:-1], dtype=arg.dtype)
+    return _Wrapper(evaluable.Sum, arg, shape=arg.shape[:-1], dtype=arg.dtype, spaces=arg.spaces)
   axes = typing.cast(Sequence[int], (axis,) if isinstance(axis, numbers.Integral) else axis)
   summed = _Transpose.to_end(arg, *axes)
   for i in range(len(axes)):
-    summed = _Wrapper(evaluable.Sum, summed, shape=summed.shape[:-1], dtype=summed.dtype)
+    summed = _Wrapper(evaluable.Sum, summed, shape=summed.shape[:-1], dtype=summed.dtype, spaces=arg.spaces)
   return summed
 
 def product(__arg: IntoArray, axis: int) -> Array:
@@ -1427,7 +1441,7 @@ def product(__arg: IntoArray, axis: int) -> Array:
 
   arg = Array.cast(__arg)
   transposed = _Transpose.to_end(arg, axis)
-  return _Wrapper(evaluable.Product, transposed, shape=transposed.shape[:-1], dtype=int if transposed.dtype == bool else transposed.dtype)
+  return _Wrapper(evaluable.Product, transposed, shape=transposed.shape[:-1], dtype=int if transposed.dtype == bool else transposed.dtype, spaces=arg.spaces)
 
 # LINEAR ALGEBRA
 
@@ -1539,7 +1553,7 @@ def inverse(__arg: IntoArray, __axes: Tuple[int, int] = (-2,-1)) -> Array:
   transposed = _Transpose.to_end(Array.cast(__arg), *__axes)
   if transposed.shape[-2] != transposed.shape[-1]:
     raise ValueError('cannot compute the inverse along two axes with different lengths')
-  inverted = _Wrapper(evaluable.Inverse, transposed, shape=transposed.shape, dtype=float)
+  inverted = _Wrapper(evaluable.Inverse, transposed, shape=transposed.shape, dtype=float, spaces=transposed.spaces)
   return _Transpose.from_end(inverted, *__axes)
 
 def determinant(__arg: IntoArray, __axes: Tuple[int, int] = (-2,-1)) -> Array:
@@ -1558,7 +1572,7 @@ def determinant(__arg: IntoArray, __axes: Tuple[int, int] = (-2,-1)) -> Array:
   '''
 
   transposed = _Transpose.to_end(Array.cast(__arg), *__axes)
-  return _Wrapper(evaluable.Determinant, transposed, shape=transposed.shape[:-2], dtype=float)
+  return _Wrapper(evaluable.Determinant, transposed, shape=transposed.shape[:-2], dtype=float, spaces=transposed.spaces)
 
 def _eval_eigval(arg: evaluable.Array, symmetric: bool) -> evaluable.Array:
   val, vec = evaluable.Eig(arg, symmetric)
@@ -1591,8 +1605,8 @@ def eig(__arg: IntoArray, __axes: Tuple[int, int] = (-2,-1), symmetric: bool = F
   arg = Array.cast(__arg)
   transposed = _Transpose.to_end(arg, *__axes)
   # FIXME: use complex dtype if not symmetric
-  eigval = _Wrapper(functools.partial(_eval_eigval, symmetric=symmetric), arg, shape=arg.shape[:-1], dtype=float)
-  eigvec = _Wrapper(functools.partial(_eval_eigvec, symmetric=symmetric), arg, shape=arg.shape, dtype=float)
+  eigval = _Wrapper(functools.partial(_eval_eigval, symmetric=symmetric), arg, shape=arg.shape[:-1], dtype=float, spaces=arg.spaces)
+  eigvec = _Wrapper(functools.partial(_eval_eigvec, symmetric=symmetric), arg, shape=arg.shape, dtype=float, spaces=arg.spaces)
   return diagonalize(eigval), eigvec
 
 def _takediag(__arg: IntoArray, _axis1: int = -2, _axis2: int =-1) -> Array:
@@ -1600,7 +1614,7 @@ def _takediag(__arg: IntoArray, _axis1: int = -2, _axis2: int =-1) -> Array:
   transposed = _Transpose.to_end(arg, _axis1, _axis2)
   if transposed.shape[-2] != transposed.shape[-1]:
     raise ValueError('cannot take the diagonal along two axes with different lengths')
-  return _Wrapper(evaluable.TakeDiag, transposed, shape=transposed.shape[:-1], dtype=transposed.dtype)
+  return _Wrapper(evaluable.TakeDiag, transposed, shape=transposed.shape[:-1], dtype=transposed.dtype, spaces=arg.spaces)
 
 def takediag(__arg: IntoArray, __axis: int = -2, __rmaxis: int = -1) -> Array:
   '''Return the diagonal of the argument along the given axes.
@@ -1652,7 +1666,7 @@ def diagonalize(__arg: IntoArray, __axis: int = -1, __newaxis: int = -1) -> Arra
   newaxis = numeric.normdim(arg.ndim+1, __newaxis)
   assert axis < newaxis
   transposed = _Transpose.to_end(arg, axis)
-  diagonalized = _Wrapper(evaluable.Diagonalize, transposed, shape=(*transposed.shape, transposed.shape[-1]), dtype=transposed.dtype)
+  diagonalized = _Wrapper(evaluable.Diagonalize, transposed, shape=(*transposed.shape, transposed.shape[-1]), dtype=transposed.dtype, spaces=arg.spaces)
   return _Transpose.from_end(diagonalized, axis, newaxis)
 
 def cross(__arg1: IntoArray, __arg2: IntoArray, axis: int = -1) -> Array:
@@ -1717,7 +1731,7 @@ def _append_axes(__array: IntoArray, __shape: Shape) -> Array:
   array = Array.cast(__array)
   for n in __shape:
     n = Array.cast(n, dtype=int, ndim=0)
-    array = _Wrapper(evaluable.InsertAxis, array, _WithoutPoints(Array.cast(n)), shape=(*array.shape, n), dtype=array.dtype)
+    array = _Wrapper(evaluable.InsertAxis, array, _WithoutPoints(Array.cast(n)), shape=(*array.shape, n), dtype=array.dtype, spaces=array.spaces)
   return array
 
 def _prepend_axes(__array: IntoArray, __shape: Shape) -> Array:
@@ -1827,7 +1841,7 @@ def ravel(__array: IntoArray, axis: int) -> Array:
   array = Array.cast(__array)
   axis = numeric.normdim(array.ndim-1, axis)
   transposed = _Transpose.to_end(array, axis, axis+1)
-  raveled = _Wrapper(evaluable.Ravel, transposed, shape=(*transposed.shape[:-2], transposed.shape[-2]*transposed.shape[-1]), dtype=transposed.dtype)
+  raveled = _Wrapper(evaluable.Ravel, transposed, shape=(*transposed.shape[:-2], transposed.shape[-2]*transposed.shape[-1]), dtype=transposed.dtype, spaces=array.spaces)
   return _Transpose.from_end(raveled, axis)
 
 def unravel(__array: IntoArray, axis: int, shape: Tuple[IntoArray, IntoArray]) -> Array:
@@ -1856,7 +1870,7 @@ def unravel(__array: IntoArray, axis: int, shape: Tuple[IntoArray, IntoArray]) -
   shape_ = tuple(Array.cast(length, dtype=int, ndim=0) for length in shape)
   assert len(shape_) == 2
   transposed = _Transpose.to_end(array, axis)
-  unraveled = _Wrapper(evaluable.Unravel, transposed, *map(_WithoutPoints, shape_), shape=(*transposed.shape[:-1], *shape_), dtype=transposed.dtype)
+  unraveled = _Wrapper(evaluable.Unravel, transposed, *map(_WithoutPoints, shape_), shape=(*transposed.shape[:-1], *shape_), dtype=transposed.dtype, spaces=array.spaces)
   return _Transpose.from_end(unraveled, axis, axis+1)
 
 def take(__array: IntoArray, __indices: IntoArray, axis: int) -> Array:
@@ -1898,7 +1912,7 @@ def take(__array: IntoArray, __indices: IntoArray, axis: int) -> Array:
   else:
     indices = _Wrapper.broadcasted_arrays(evaluable.NormDim, array.shape[axis], indices)
   transposed = _Transpose.to_end(array, axis)
-  taken = _Wrapper(evaluable.Take, transposed, _WithoutPoints(indices), shape=(*transposed.shape[:-1], *indices.shape), dtype=array.dtype)
+  taken = _Wrapper(evaluable.Take, transposed, _WithoutPoints(indices), shape=(*transposed.shape[:-1], *indices.shape), dtype=array.dtype, spaces=array.spaces)
   return _Transpose.from_end(taken, *range(axis, axis+indices.ndim))
 
 def get(__array: IntoArray, __axis: int, __index: IntoArray) -> Array:
@@ -1930,7 +1944,7 @@ def get(__array: IntoArray, __axis: int, __index: IntoArray) -> Array:
 def _range(__length: IntoArray, __offset: IntoArray) -> Array:
   length = Array.cast(__length, dtype=int, ndim=0)
   offset = Array.cast(__offset, dtype=int, ndim=0)
-  return _Wrapper(evaluable.Range, _WithoutPoints(length), _WithoutPoints(offset), shape=(length,), dtype=int)
+  return _Wrapper(evaluable.Range, _WithoutPoints(length), _WithoutPoints(offset), shape=(length,), dtype=int, spaces=length.spaces | offset.spaces)
 
 def _takeslice(__array: IntoArray, __s: slice, __axis: int) -> Array:
   array = Array.cast(__array)
@@ -1981,7 +1995,7 @@ def inflate(__array: IntoArray, indices: IntoArray, length: IntoArray, axis: int
   indices = _Wrapper.broadcasted_arrays(evaluable.NormDim, length, Array.cast(indices, dtype=int))
   axis = numeric.normdim(array.ndim+1-indices.ndim, axis)
   transposed = _Transpose.to_end(array, *range(axis, axis+indices.ndim))
-  inflated = _Wrapper(evaluable.Inflate, transposed, _WithoutPoints(indices), _WithoutPoints(length), shape=(*transposed.shape[:transposed.ndim-indices.ndim], length), dtype=transposed.dtype)
+  inflated = _Wrapper(evaluable.Inflate, transposed, _WithoutPoints(indices), _WithoutPoints(length), shape=(*transposed.shape[:transposed.ndim-indices.ndim], length), dtype=transposed.dtype, spaces=array.spaces | length.spaces | indices.spaces)
   return _Transpose.from_end(inflated, axis)
 
 def kronecker(__array: IntoArray, axis: int, length: IntoArray, pos: IntoArray) -> Array:
@@ -2072,7 +2086,7 @@ def find(__array: IntoArray) -> Array:
 
   array = Array.cast(__array)
   assert array.ndim == 1 and array.dtype == bool
-  return _Wrapper(evaluable.Find, array, shape=(_array_int(array).sum(),), dtype=int)
+  return _Wrapper(evaluable.Find, array, shape=(_array_int(array).sum(),), dtype=int, spaces=array.spaces)
 
 def replace_arguments(__array: IntoArray, __arguments: Mapping[str, IntoArray]) -> Array:
   '''Replace arguments with :class:`Array` objects.
@@ -2182,7 +2196,7 @@ def normal(__geom: IntoArray, exterior: bool = False) -> Array:
     if not exterior:
       lgrad = localgradient(geom, len(geom))
       assert lgrad.ndim == 2 and lgrad.shape[0] == lgrad.shape[1]
-      return _Wrapper(evaluable.Normal, lgrad, shape=(lgrad.shape[0],), dtype=float)
+      return _Wrapper(evaluable.Normal, lgrad, shape=(lgrad.shape[0],), dtype=float, spaces=lgrad.spaces)
     lgrad = localgradient(geom, len(geom)-1)
     if len(geom) == 2:
       return Array.cast([lgrad[1,0], -lgrad[0,0]]).normalized()
@@ -2389,15 +2403,15 @@ def isarray(__arg: Any) -> bool:
   'Test if the argument is an instance of :class:`Array`.'
   return isinstance(__arg, Array)
 
-def rootcoords(__ndims: int) -> Array:
+def rootcoords(space: Space) -> Array:
   'Return the root coordinates.'
-  return _RootCoords(__ndims)
+  return _RootCoords(space)
 
-def transforms_index(transforms: Transforms) -> Array:
-  return _TransformsIndex(transforms)
+def transforms_index(spaces: Iterable[Space], transforms: Transforms) -> Array:
+  return _TransformsIndex(tuple(spaces), transforms)
 
-def transforms_coords(transforms: Transforms, dim: int) -> Array:
-  return _TransformsCoords(transforms, dim)
+def transforms_coords(spaces: Iterable[Space], transforms: Transforms) -> Array:
+  return _TransformsCoords(tuple(spaces), transforms)
 
 def Elemwise(__data: Sequence[numpy.ndarray], __index: IntoArray, dtype: DType) -> Array:
   'elemwise'
@@ -2422,7 +2436,7 @@ def Sampled(__points: IntoArray, expect: IntoArray) -> Array:
   points = Array.cast(__points)
   expect = Array.cast(expect)
   assert points.ndim == 1 and expect.ndim == 2 and expect.shape[1] == points.shape[0]
-  return _Wrapper(evaluable.Sampled, points, _WithoutPoints(expect), shape=(expect.shape[0],), dtype=int)
+  return _Wrapper(evaluable.Sampled, points, _WithoutPoints(expect), shape=(expect.shape[0],), dtype=int, spaces=points.spaces | expect.spaces)
 
 def piecewise(level: IntoArray, intervals: Sequence[IntoArray], *funcs: IntoArray) -> Array:
   'piecewise'
@@ -2511,7 +2525,8 @@ def choose(__index: IntoArray, __choices: Sequence[IntoArray]) -> Array:
     raise ValueError
   choices, shape, dtype = _broadcast(*__choices)
   index = _append_axes(index, shape)
-  return _Wrapper(_eval_choose, index, *choices, shape=shape, dtype=dtype)
+  spaces = functools.reduce(operator.or_, (arg.spaces for arg in choices), index.spaces)
+  return _Wrapper(_eval_choose, index, *choices, shape=shape, dtype=dtype, spaces=spaces)
 
 def chain(_funcs: Sequence[IntoArray]) -> Sequence[Array]:
   'chain'
@@ -2555,11 +2570,11 @@ def add_T(__arg: IntoArray, axes: Tuple[int, int] = (-2,-1)) -> Array:
 
 def bifurcate1(__arg: IntoArray) -> Array:
   arg = Array.cast(__arg)
-  return _Wrapper(evaluable.bifurcate1, arg, shape=arg.shape, dtype=arg.dtype)
+  return _Wrapper(evaluable.bifurcate1, arg, shape=arg.shape, dtype=arg.dtype, spaces=arg.spaces)
 
 def bifurcate2(__arg: IntoArray) -> Array:
   arg = Array.cast(__arg)
-  return _Wrapper(evaluable.bifurcate2, arg, shape=arg.shape, dtype=arg.dtype)
+  return _Wrapper(evaluable.bifurcate2, arg, shape=arg.shape, dtype=arg.dtype, spaces=arg.spaces)
 
 def bifurcate(__arg1: IntoArray, __arg2: IntoArray) -> Tuple[Array, Array]:
   return bifurcate1(__arg1), bifurcate2(__arg2)
@@ -2567,12 +2582,12 @@ def bifurcate(__arg1: IntoArray, __arg2: IntoArray) -> Tuple[Array, Array]:
 def trignormal(_angle: IntoArray) -> Array:
   angle = Array.cast(_angle)
   assert angle.ndim == 0
-  return _Wrapper(evaluable.TrigNormal, angle, shape=(2,), dtype=float)
+  return _Wrapper(evaluable.TrigNormal, angle, shape=(2,), dtype=float, spaces=angle.spaces)
 
 def trigtangent(_angle: IntoArray) -> Array:
   angle = Array.cast(_angle)
   assert angle.ndim == 0
-  return _Wrapper(evaluable.TrigTangent, angle, shape=(2,), dtype=float)
+  return _Wrapper(evaluable.TrigTangent, angle, shape=(2,), dtype=float, spaces=angle.spaces)
 
 def rotmat(__arg: IntoArray) -> Array:
   arg = Array.cast(__arg)
@@ -2638,7 +2653,7 @@ class Basis(Array):
     self.nelems = nelems
     self.index = Array.cast(index, dtype=int, ndim=0)
     self.coords = coords
-    super().__init__((ndofs,), float)
+    super().__init__((ndofs,), float, spaces=index.spaces | coords.spaces)
 
     _index = evaluable.Argument('_index', shape=(), dtype=int)
     self._arg_dofs, self._arg_coeffs = [f.optimized_for_numpy for f in self.f_dofs_coeffs(_index)]
