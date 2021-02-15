@@ -2192,7 +2192,10 @@ def grad(__arg: IntoArray, __geom: IntoArray, ndims: int = 0) -> Array:
   else:
     if ndims <= 0:
       ndims += geom.shape[0]
-    J = localgradient(geom, ndims)
+    if len(geom.spaces) != 1:
+      raise NotImplementedError
+    space, = geom.spaces
+    J = _RootGradient(geom, space)
     if J.shape[0] == J.shape[1]:
       Jinv = inverse(J)
     elif J.shape[0] == J.shape[1] + 1: # gamma gradient
@@ -2201,7 +2204,7 @@ def grad(__arg: IntoArray, __geom: IntoArray, ndims: int = 0) -> Array:
       Jinv = dot(J[numpy.newaxis,:,:], Ginv[:,numpy.newaxis,:], -1)
     else:
       raise Exception('cannot invert {}x{} jacobian'.format(J.shape[0], J.shape[1]))
-    return dot(_append_axes(localgradient(arg, ndims), Jinv.shape[-1:]), Jinv, -2)
+    return dot(_append_axes(_RootGradient(arg, space), Jinv.shape[-1:]), Jinv, -2)
 
 def normal(__geom: IntoArray, exterior: bool = False) -> Array:
   '''Return the normal of the geometry.
