@@ -674,6 +674,24 @@ class _Derivative(Array):
     arg = self._arg.lower(**kwargs)
     return evaluable.derivative(arg, self._eval_var)
 
+class _RootGradient(Array):
+  '''The gradient of a function to the root coordinate system.
+
+  Parameters
+  ----------
+  arg : :class:`Array` or something that can be :meth:`~Array.cast` into one
+  space : :class:`Space`
+  '''
+
+  def __init__(self, arg: Array, space: Space) -> None:
+    self._arg = arg
+    self._space = space
+    super().__init__((*arg.shape, space.dim), arg.dtype, arg.spaces)
+
+  def lower(self, **kwargs: Any) -> evaluable.Array:
+    arg = self._arg.lower(**kwargs)
+    return evaluable.derivative(arg, evaluable.IdentifierDerivativeTarget(self._space, (self._space.dim,)))
+
 class _Jacobian(Array):
 
   def __init__(self, geom: Array) -> None:
