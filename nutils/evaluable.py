@@ -1506,6 +1506,19 @@ class ApplyTransforms(Array):
       return prependaxes(LinearFrom(self.trans, self._todim, len(var)), self.shape[:-1])
     return zeros(self.shape+var.shape)
 
+class TransformExtendedLinear(Array):
+
+  __slots__ = '_todim'
+
+  @types.apply_annotations
+  def __init__(self, trans:types.strict[TransformChain], todim:types.strictint):
+    self._todim = todim
+    super().__init__(args=[trans], shape=(todim, todim), dtype=float)
+
+  def evalf(self, chain):
+    assert chain.todim == self._todim
+    return chain.extended_linear
+
 class LinearFrom(Array):
 
   __slots__ = 'todim', 'fromdim'
