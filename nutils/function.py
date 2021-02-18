@@ -634,6 +634,29 @@ class _RootCoords(Array):
     coords = evaluable.ApplyTransforms(transform_chains[0], coordinates[0], self._space.dim)
     return evaluable.WithDerivative(coords, evaluable.IdentifierDerivativeTarget(self._space, (self._space.dim,)), inv_linear)
 
+class _Normal(Array):
+
+  def __init__(self, geom: Array, space: Space) -> None:
+    assert geom.shape[-1] == space.dim
+    self._geom = geom
+    self._space = space
+    super().__init__(geom.shape, float, geom.spaces | frozenset((space,)))
+
+  def lower(self, *, transform_chains: Tuple[evaluable.TransformChain] = (), coordinates: Tuple[evaluable.Array] = (), **kwargs) -> evaluable.Array:
+    assert transform_chains and coordinates
+    manifolddim = int(coordinates[0].shape[-1])
+    assert manifolddim <= self._space.dim
+    if manifolddim != self._space.dim - 1:
+      if manifolddim == self._space.dim:
+        raise ValueError('Cannot compute the normal because the dimension of the normal space is zero.')
+      else:
+        raise ValueError('Cannot unambiguously compute the normal because the dimension of the normal space is larger than one.')
+    rgrad = _RootGradient(self._geom, self._space).lower(transform_chains=transform_chains, coordinates=coordinates, **kwargs)
+    basis = evaluable.TransformExtendedLinear(transform_chains[0], self._space.dim)
+    basis = evaluable.prependaxes(basis, rgrad.shape[:-1])
+    rgrad = evaluable.appendaxes(rgrad, (self._space.dim,))
+    return evaluable.Normal(evaluable.dot(rgrad, basis, -2))
+
 class _TransformsIndex(Array):
 
   def __init__(self, spaces: Tuple[Space, ...], transforms: Transforms) -> None:
@@ -2242,16 +2265,24 @@ def normal(__geom: IntoArray, exterior: bool = False) -> Array:
   elif geom.ndim > 1:
     sh = geom.shape[-2:]
     return unravel(normal(ravel(geom, geom.ndim-2), exterior), geom.ndim-2, sh)
+  elif not exterior:
+    if len(geom.spaces) != 1:
+      raise NotImplementedError
+    space, = geom.spaces
+    if geom.shape[0] != space.dim:
+      raise ValueError('The dimension of the geometry ({}) does not match the dimension of the root coordinate system ({}).'.format(geom.shape[0], space.dim))
+    return _Normal(geom, space)
   else:
-    if not exterior:
-      lgrad = localgradient(geom, len(geom))
-      assert lgrad.ndim == 2 and lgrad.shape[0] == lgrad.shape[1]
-      return _Wrapper(evaluable.Normal, lgrad, shape=(lgrad.shape[0],), dtype=float, spaces=lgrad.spaces)
-    lgrad = localgradient(geom, len(geom)-1)
+    if len(geom.spaces) != 1:
+      raise NotImplementedError
+    space, = geom.spaces
+    if geom.shape[0] != space.dim + 1:
+      raise ValueError('For the exterior normal the dimension of the geometry must be one larger than that of the root coordinate system, but got {} and {} respectively.'.format(geom.shape[0], space.dim))
+    rgrad = _RootGradient(geom, space)
     if len(geom) == 2:
-      return Array.cast([lgrad[1,0], -lgrad[0,0]]).normalized()
+      return Array.cast([rgrad[1,0], -rgrad[0,0]]).normalized()
     if len(geom) == 3:
-      return cross(lgrad[:,0], lgrad[:,1], axis=0).normalized()
+      return cross(rgrad[:,0], rgrad[:,1], axis=0).normalized()
     raise NotImplementedError
 
 def dotnorm(__arg: IntoArray, __geom: IntoArray, axis: int = -1) -> Array:
