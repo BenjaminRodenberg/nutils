@@ -706,15 +706,32 @@ class _RootGradient(Array):
 
 class _Jacobian(Array):
 
-  def __init__(self, geom: Array) -> None:
+  def __init__(self, geom: Array, space: Space) -> None:
     assert geom.ndim == 1
     self._geom = geom
+    self._space = space
     super().__init__((), float, geom.spaces)
 
-  def lower(self, *, coordinates: Tuple[evaluable.Array] = (), **kwargs: Any) -> evaluable.Array:
+  def lower(self, *, transform_chains: Tuple[evaluable.TransformChain, ...], coordinates: Tuple[evaluable.Array, ...] = (), **kwargs: Any) -> evaluable.Array:
     assert coordinates
-    ndims = int(coordinates[0].shape[-1])
-    return evaluable.jacobian(self._geom.lower(coordinates=coordinates, **kwargs), ndims)
+    manifolddim = int(coordinates[0].shape[-1])
+    assert manifolddim <= self._space.dim
+    J = _RootGradient(self._geom, self._space).lower(transform_chains=transform_chains, coordinates=coordinates, **kwargs)
+    scale = 1
+    if manifolddim < self._space.dim:
+      M = evaluable.TransformExtendedLinear(transform_chains[0], self._space.dim)[:,:manifolddim]
+      assert M.ndim == 2
+      MT = evaluable.swapaxes(M, 0, 1)
+      matmat = lambda a, b: evaluable.dot(evaluable.insertaxis(a, 2, b.shape[1]), evaluable.insertaxis(b, 0, a.shape[0]), 1)
+      MTM = matmat(MT, M)
+      proj_M = matmat(evaluable.inverse(MTM), MT)
+      J = evaluable.dot(evaluable.prependaxes(proj_M, J.shape[:-1]), evaluable.insertaxis(J, -2, proj_M.shape[0]), -1)
+      scale = evaluable.sqrt(evaluable.abs(evaluable.determinant(MTM)))
+    if evaluable.equalindex(J.shape[-2], J.shape[-1]):
+      return evaluable.abs(evaluable.determinant(J)) * scale
+    else:
+      JTJ = evaluable.dot(evaluable.insertaxis(J, -2, manifolddim), evaluable.insertaxis(J, -1, manifolddim), -3)
+      return evaluable.sqrt(evaluable.abs(evaluable.determinant(JTJ))) * scale
 
 class _Elemwise(Array):
 
@@ -2295,8 +2312,11 @@ def jacobian(__geom: IntoArray, __ndims: Optional[int] = None) -> Array:
   '''
 
   geom = Array.cast(__geom)
+  if len(geom.spaces) != 1:
+    raise NotImplementedError
+  space, = geom.spaces
   # TODO: check `__ndims` with `ndims` argument passed to `lower`.
-  return _Jacobian(geom)
+  return _Jacobian(geom, space)
 
 def J(__geom: IntoArray, __ndims: Optional[int] = None) -> Array:
   '''Return the absolute value of the determinant of the Jacobian matrix of the given geometry.

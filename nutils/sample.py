@@ -157,9 +157,10 @@ class Sample(types.Singleton):
     if kwargs.pop('transform_chains', None) or kwargs.pop('coordinates', None):
       raise ValueError('nested integrals or samples are not yet supported')
     ielem = evaluable.Argument('_ielem', (), dtype=int)
-    return ielem, func.lower(**kwargs,
-      transform_chains=tuple(t.get_evaluable(ielem) for t in self.transforms),
-      coordinates=(self.points.get_evaluable_coords(ielem),) * len(self.transforms))
+    transform_chains = tuple(t.get_evaluable(ielem) for t in self.transforms)
+    coordinates = (self.points.get_evaluable_coords(ielem),) * len(self.transforms)
+    lowered = func.lower(**kwargs, transform_chains=transform_chains, coordinates=coordinates)
+    return ielem, transform_chains, coordinates, lowered
 
   @util.positional_only
   @util.single_or_multiple
@@ -441,8 +442,19 @@ class _Integral(function.Array):
     self._sample = sample
     super().__init__(shape=integrand.shape, dtype=float if integrand.dtype in (bool, int) else integrand.dtype, spaces=frozenset(()))
 
-  def lower(self, **kwargs) -> evaluable.Array:
-    ielem, integrand = self._sample._lower_for_loop(self._integrand, **kwargs)
+  def lower(self, **kwargs):
+    ielem, transform_chains, coordinates, integrand = self._sample._lower_for_loop(self._integrand, **kwargs)
+    rootdim = self._sample.transforms[0].todim
+    manifolddim = int(coordinates[0].shape[-1])
+    assert manifolddim <= rootdim
+    J = evaluable.TransformExtendedLinear(transform_chains[0], rootdim)[:,:manifolddim]
+    assert evaluable.equalshape(J.shape, (rootdim, manifolddim))
+    if manifolddim == rootdim:
+      detJ = evaluable.abs(evaluable.determinant(J))
+    else:
+      JTJ = evaluable.dot(evaluable.insertaxis(J, 1, manifolddim), evaluable.insertaxis(J, 2, manifolddim), 0)
+      detJ = evaluable.sqrt(evaluable.abs(evaluable.determinant(JTJ)))
+    integrand *= detJ
     contracted = evaluable.dot(evaluable.appendaxes(self._sample.points.get_evaluable_weights(ielem), integrand.shape[1:]), integrand, 0)
     return evaluable.LoopSum(contracted, ielem, self._sample.nelems)
 
@@ -456,7 +468,7 @@ class _AtSample(function.Array):
     super().__init__(shape=(sample.points.npoints, *func.shape), dtype=func.dtype, spaces=frozenset(()))
 
   def lower(self, **kwargs) -> evaluable.Array:
-    ielem, func = self._sample._lower_for_loop(self._func, **kwargs)
+    ielem, transform_chains, coordinates, func = self._sample._lower_for_loop(self._func, **kwargs)
     indices = self._sample.get_evaluable_indices(ielem)
     inflated = evaluable.Transpose.from_end(evaluable.Inflate(evaluable.Transpose.to_end(func, 0), indices, self._sample.npoints), 0)
     return evaluable.LoopSum(inflated, ielem, self._sample.nelems)
