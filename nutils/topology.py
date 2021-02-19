@@ -51,12 +51,12 @@ class Topology(types.Singleton):
 
   @types.apply_annotations
   def __init__(self, references:types.strict[References], transforms:transformseq.stricttransforms, opposites:transformseq.stricttransforms):
-    assert references.ndims == opposites.fromdims == transforms.fromdims
+    assert references.ndims == opposites.fromdim == transforms.fromdim
     assert len(references) == len(transforms) == len(opposites)
     self.references = references
     self.transforms = transforms
     self.opposites = opposites
-    self.ndims = transforms.fromdims
+    self.ndims = transforms.fromdim
     super().__init__()
 
   def __str__(self):
@@ -857,7 +857,7 @@ class Point(Topology):
 
   @_preprocess_init
   def __init__(self, trans, opposite):
-    assert trans[-1].fromdims == 0
+    assert trans[-1].fromdim == 0
     references = References.uniform(element.getsimplex(0), 1)
     transforms = transformseq.PlainTransforms((trans,), 0)
     opposites = transforms if opposite is None else transformseq.PlainTransforms((opposite,), 0)
@@ -1326,11 +1326,11 @@ class SimplexTopology(Topology):
 
   @types.apply_annotations
   def __init__(self, simplices:_renumber, transforms:transformseq.stricttransforms, opposites:transformseq.stricttransforms):
-    assert simplices.shape == (len(transforms), transforms.fromdims+1)
+    assert simplices.shape == (len(transforms), transforms.fromdim+1)
     self.simplices = numpy.asarray(simplices)
     assert numpy.greater(self.simplices[:,1:], self.simplices[:,:-1]).all(), 'nodes should be sorted'
     assert not numpy.equal(self.simplices[:,1:], self.simplices[:,:-1]).all(), 'duplicate nodes'
-    references = References.uniform(element.getsimplex(transforms.fromdims), len(transforms))
+    references = References.uniform(element.getsimplex(transforms.fromdim), len(transforms))
     super().__init__(references, transforms, opposites)
 
   @property

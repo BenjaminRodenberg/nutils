@@ -107,7 +107,7 @@ class Sample(types.Singleton):
     self.nelems = len(transforms[0])
     self.transforms = transforms
     self.points = points
-    self.ndims = transforms[0].fromdims
+    self.ndims = transforms[0].fromdim
 
   def __repr__(self):
     return '{}.{}<{}D, {} elems, {} points>'.format(type(self).__module__, type(self).__qualname__, self.ndims, self.nelems, self.npoints)

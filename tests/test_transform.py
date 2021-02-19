@@ -17,11 +17,19 @@ class TestTransform(TestCase):
     self.linear = linear
     self.offset = offset
 
+  def test_fromdim(self):
+    self.assertEqual(self.trans.fromdim, numpy.shape(self.linear)[1])
+
+  def test_todim(self):
+    self.assertEqual(self.trans.todim, numpy.shape(self.linear)[0])
+
   def test_fromdims(self):
-    self.assertEqual(self.trans.fromdims, numpy.shape(self.linear)[1])
+    with self.assertWarns(warnings.NutilsDeprecationWarning):
+      self.assertEqual(self.trans.fromdims, numpy.shape(self.linear)[1])
 
   def test_todims(self):
-    self.assertEqual(self.trans.todims, numpy.shape(self.linear)[0])
+    with self.assertWarns(warnings.NutilsDeprecationWarning):
+      self.assertEqual(self.trans.todims, numpy.shape(self.linear)[0])
 
   def test_linear(self):
     self.assertAllEqual(self.trans.linear, self.linear)
@@ -30,7 +38,7 @@ class TestTransform(TestCase):
     self.assertAllEqual(self.trans.offset, self.offset)
 
   def test_apply(self):
-    coords = numpy.array([[0]*self.trans.fromdims, numpy.arange(.5,self.trans.fromdims)/self.trans.fromdims])
+    coords = numpy.array([[0]*self.trans.fromdim, numpy.arange(.5,self.trans.fromdim)/self.trans.fromdim])
     a, b = self.trans.apply(coords)
     self.assertAllAlmostEqual(a, self.offset)
     self.assertAllAlmostEqual(b, numpy.dot(self.linear, coords[1]) + self.offset)
@@ -38,7 +46,7 @@ class TestTransform(TestCase):
 class TestInvertible(TestTransform):
 
   def test_invapply(self):
-    coords = numpy.array([self.offset, numpy.arange(.5,self.trans.fromdims)/self.trans.fromdims])
+    coords = numpy.array([self.offset, numpy.arange(.5,self.trans.fromdim)/self.trans.fromdim])
     a, b = self.trans.invapply(coords)
     self.assertAllAlmostEqual(a, 0)
     self.assertAllAlmostEqual(b, numpy.linalg.solve(self.linear, (coords[1] - self.offset)))

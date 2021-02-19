@@ -8,7 +8,7 @@ triangle = nutils.element.TriangleReference()
 
 class Common:
 
-  def test_fromdims(self):
+  def test_ndims(self):
     self.assertEqual(self.seq.ndims, self.checkndims)
 
   def test_len(self):

@@ -570,12 +570,17 @@ class TransformChain(Evaluable):
   Evaluates to a tuple of :class:`nutils.transform.TransformItem` objects.
   '''
 
-  __slots__ = 'todims',
+  __slots__ = 'todim',
 
   @types.apply_annotations
-  def __init__(self, args:types.tuple[strictevaluable], todims:types.strictint=None):
-    self.todims = todims
+  def __init__(self, args:types.tuple[strictevaluable], todim:types.strictint=None):
+    self.todim = todim
     super().__init__(args)
+
+  @property
+  def todims(self):
+    warnings.deprecation('`todims` has been renamed to `todim`')
+    return self.todim
 
 class SelectChain(TransformChain):
 
@@ -610,12 +615,12 @@ class PopHead(TransformChain):
   __slots__ = 'trans',
 
   @types.apply_annotations
-  def __init__(self, todims:types.strictint, trans):
+  def __init__(self, todim:types.strictint, trans):
     self.trans = trans
-    super().__init__(args=[self.trans], todims=todims)
+    super().__init__(args=[self.trans], todim=todim)
 
   def evalf(self, trans):
-    assert trans[0].fromdims == self.todims
+    assert trans[0].fromdim == self.todim
     return trans[1:]
 
 class SelectBifurcation(TransformChain):
@@ -623,10 +628,10 @@ class SelectBifurcation(TransformChain):
   __slots__ = 'trans', 'first'
 
   @types.apply_annotations
-  def __init__(self, trans:strictevaluable, first:bool, todims:types.strictint=None):
+  def __init__(self, trans:strictevaluable, first:bool, todim:types.strictint=None):
     self.trans = trans
     self.first = first
-    super().__init__(args=[trans], todims=todims)
+    super().__init__(args=[trans], todim=todim)
 
   def evalf(self, trans):
     assert isinstance(trans, tuple)
@@ -639,10 +644,10 @@ class TransformChainFromTuple(TransformChain):
 
   __slots__ = 'index',
 
-  def __init__(self, values:strictevaluable, index:types.strictint, todims:types.strictint=None):
+  def __init__(self, values:strictevaluable, index:types.strictint, todim:types.strictint=None):
     assert 0 <= index < len(values)
     self.index = index
-    super().__init__(args=[values], todims=todims)
+    super().__init__(args=[values], todim=todim)
 
   def evalf(self, values):
     return values[self.index]
@@ -669,7 +674,7 @@ class TransformsIndexWithTail(Evaluable):
 
   @property
   def tail(self):
-    return TransformChainFromTuple(self, index=1, todims=self._transforms.fromdims)
+    return TransformChainFromTuple(self, index=1, todim=self._transforms.fromdim)
 
   def __iter__(self):
     yield self.index
@@ -1487,35 +1492,35 @@ class Product(Array):
 
 class ApplyTransforms(Array):
 
-  __slots__ = 'trans', '_todims'
+  __slots__ = 'trans', '_todim'
 
   @types.apply_annotations
-  def __init__(self, trans:types.strict[TransformChain], points, todims:types.strictint):
+  def __init__(self, trans:types.strict[TransformChain], points, todim:types.strictint):
     self.trans = trans
-    self._todims = todims
-    super().__init__(args=[points, trans], shape=points.shape[:-1]+(todims,), dtype=float)
+    self._todim = todim
+    super().__init__(args=[points, trans], shape=points.shape[:-1]+(todim,), dtype=float)
 
   def evalf(self, points, chain):
     return transform.apply(chain, points)
 
   def _derivative(self, var, seen):
     if isinstance(var, LocalCoords) and len(var) > 0:
-      return prependaxes(LinearFrom(self.trans, self._todims, len(var)), self.shape[:-1])
+      return prependaxes(LinearFrom(self.trans, self._todim, len(var)), self.shape[:-1])
     return zeros(self.shape+var.shape)
 
 class LinearFrom(Array):
 
-  __slots__ = 'todims', 'fromdims'
+  __slots__ = 'todim', 'fromdim'
 
   @types.apply_annotations
-  def __init__(self, trans:types.strict[TransformChain], todims:types.strictint, fromdims:types.strictint):
-    self.todims = todims
-    self.fromdims = fromdims
-    super().__init__(args=[trans], shape=(todims, fromdims), dtype=float)
+  def __init__(self, trans:types.strict[TransformChain], todim:types.strictint, fromdim:types.strictint):
+    self.todim = todim
+    self.fromdim = fromdim
+    super().__init__(args=[trans], shape=(todim, fromdim), dtype=float)
 
   def evalf(self, chain):
-    assert not chain or chain[0].todims == self.todims
-    return transform.linearfrom(chain, self.fromdims)
+    assert not chain or chain[0].todim == self.todim
+    return transform.linearfrom(chain, self.fromdim)
 
 class Inverse(Array):
   '''

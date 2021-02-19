@@ -783,9 +783,9 @@ class Cone(Reference):
 
   @types.apply_annotations
   def __init__(self, edgeref, etrans, tip:types.arraydata):
-    assert etrans.fromdims == edgeref.ndims
-    assert etrans.todims == tip.shape[0]
-    super().__init__(etrans.todims)
+    assert etrans.fromdim == edgeref.ndims
+    assert etrans.todim == tip.shape[0]
+    super().__init__(etrans.todim)
     self.edgeref = edgeref
     self.etrans = etrans
     self.tip = numpy.asarray(tip)
