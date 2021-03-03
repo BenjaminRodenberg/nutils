@@ -109,8 +109,8 @@ class Topology(types.Singleton):
     # have reused the result of an earlier lookup to avoid a new (using index
     # instead of contains) but we choose to trade some speed for simplicity.
     references = self.references.take(ind_self).chain(other.references.take(ind_other))
-    transforms = transformseq.chain([self.transforms[ind_self], other.transforms[ind_other]], self.transforms.todim, self.ndims)
-    opposites = transformseq.chain([self.opposites[ind_self], other.opposites[ind_other]], self.transforms.todim, self.ndims)
+    transforms = transformseq.chain([self.transforms[ind_self], other.transforms[ind_other]], self.transforms.todims, self.ndims)
+    opposites = transformseq.chain([self.opposites[ind_self], other.opposites[ind_other]], self.transforms.todims, self.ndims)
     return Topology(references, transforms, opposites)
 
   __rand__ = lambda self, other: self.__and__(other)
@@ -359,6 +359,9 @@ class Topology(types.Singleton):
   def trim(self, levelset, maxrefine, ndivisions=8, name='trimmed', leveltopo=None, *, arguments=None):
     'trim element along levelset'
 
+    if len(self.transforms.todims) != 1:
+      raise NotImplementedError('Trimming is not yet supported on topologies with multiple roots.')
+
     if arguments is None:
       arguments = {}
 
@@ -375,11 +378,11 @@ class Topology(types.Singleton):
       levelset = levelset.lower(transform_chains=(evaluable.SelectChain(0), evaluable.SelectChain(1)), coordinates=(evaluable.Points(evaluable.NPoints(), self.ndims),)*2).optimized_for_numpy
       bins = [set() for ielem in range(len(self))]
       for trans in leveltopo.transforms:
-        ielem, tail = self.transforms.index_with_tail(trans)
+        ielem, (tail,) = self.transforms.index_with_tail(trans)
         bins[ielem].add(tail)
       fcache = cache.WrapperCache()
       with log.iter.percentage('trimming', self.references, self.transforms, bins) as items:
-        for ref, trans, ctransforms in items:
+        for ref, (trans,), ctransforms in items:
           levels = numpy.empty(ref.nvertices_by_level(maxrefine))
           cover = list(fcache[ref.vertex_cover](frozenset(ctransforms), maxrefine))
           # confirm cover and greedily optimize order
@@ -390,7 +393,7 @@ class Topology(types.Singleton):
             leveltrans = trans
             for item in tail:
               leveltrans = leveltrans.append(item)
-            levels[indices] = levelset.eval(_transforms=(leveltrans,), _points=points, **arguments)
+            levels[indices] = levelset.eval(_transforms=(transform.TransformChains(leveltrans),), _points=points, **arguments)
             mask[indices] = False
           refs.append(ref.trim(levels, maxrefine=maxrefine, ndivisions=ndivisions))
       log.debug('cache', fcache.stats)
@@ -842,7 +845,7 @@ class EmptyTopology(Topology):
 
   @types.apply_annotations
   def __init__(self, rootdim:types.strictint, ndims:types.strictint):
-    super().__init__(References.empty(ndims), transformseq.EmptyTransforms(rootdim, ndims), transformseq.EmptyTransforms(rootdim, ndims))
+    super().__init__(References.empty(ndims), transformseq.EmptyTransforms((rootdim,), ndims), transformseq.EmptyTransforms((rootdim,), ndims))
 
   def __or__(self, other):
     assert self.ndims == other.ndims
@@ -1418,8 +1421,8 @@ class UnionTopology(Topology):
 
     super().__init__(
       References.from_iter(references, ndims),
-      transformseq.chain((topo.transforms[selection] for topo, selection in zip(topos, selections)), topos[0].transforms.todim, ndims),
-      transformseq.chain((topo.opposites[selection] for topo, selection in zip(topos, selections)), topos[0].transforms.todim, ndims))
+      transformseq.chain((topo.transforms[selection] for topo, selection in zip(topos, selections)), topos[0].transforms.todims, ndims),
+      transformseq.chain((topo.opposites[selection] for topo, selection in zip(topos, selections)), topos[0].transforms.todims, ndims))
 
   def getitem(self, item):
     topos = [topo if name == item else topo.getitem(item) for topo, name in itertools.zip_longest(self._topos, self._names)]
@@ -1448,8 +1451,8 @@ class DisjointUnionTopology(Topology):
     assert all(topo.ndims == ndims for topo in self._topos)
     super().__init__(
       util.sum(topo.references for topo in self._topos),
-      transformseq.chain((topo.transforms for topo in self._topos), topos[0].transforms.todim, ndims),
-      transformseq.chain((topo.opposites for topo in self._topos), topos[0].transforms.todim, ndims))
+      transformseq.chain((topo.transforms for topo in self._topos), topos[0].transforms.todims, ndims),
+      transformseq.chain((topo.opposites for topo in self._topos), topos[0].transforms.todims, ndims))
 
   def getitem(self, item):
     topos = [topo if name == item else topo.getitem(item) for topo, name in itertools.zip_longest(self._topos, self._names)]
@@ -1528,7 +1531,7 @@ class SubsetTopology(Topology):
     for ielem, newref in enumerate(self.refs):
       if not newref:
         continue
-      elemtrans = self.basetopo.transforms[ielem]
+      elemtrans, = self.basetopo.transforms[ielem]
       # The first edges of newref by convention share location with the edges
       # of the original reference. We can therefore use baseconnectivity to
       # locate opposing edges.
@@ -1539,7 +1542,7 @@ class SubsetTopology(Topology):
         if ioppelem == -1:
           # If the edge had no opposite in basetopology then it must already by
           # in baseboundary, so we can use index to locate it.
-          brefs[baseboundary.transforms.index(elemtrans.append(edgetrans))] = edgeref
+          brefs[baseboundary.transforms.index(transform.TransformChains(elemtrans.append(edgetrans)))] = edgeref
         else:
           # If the edge did have an opposite in basetopology then there is a
           # possibility this opposite (partially) disappeared, in which case
@@ -1550,7 +1553,8 @@ class SubsetTopology(Topology):
           if edgeref:
             trimmedreferences.append(edgeref)
             trimmedtransforms.append(elemtrans.append(edgetrans))
-            trimmedopposites.append(self.basetopo.transforms[ioppelem].append(oppref.edge_transforms[ioppedge]))
+            opptrans, = self.basetopo.transforms[ioppelem].append(oppref.edge_transforms[ioppedge])
+            trimmedopposites.append(opptrans)
       # The last edges of newref (beyond the number of edges of the original)
       # cannot have opposites and are added to the trimmed group directly.
       for edgetrans, edgeref in newref.edges[len(ioppelems):]:
@@ -1561,7 +1565,7 @@ class SubsetTopology(Topology):
     if isinstance(self.newboundary, Topology):
       trimmedbrefs = [ref.empty for ref in self.newboundary.references]
       for ref, trans in zip(trimmedreferences, trimmedtransforms):
-        trimmedbrefs[self.newboundary.transforms.index(trans)] = ref
+        trimmedbrefs[self.newboundary.transforms.index(transform.TransformChains(trans))] = ref
       trimboundary = SubsetTopology(self.newboundary, trimmedbrefs)
     else:
       trimboundary = Topology(References.from_iter(trimmedreferences, self.ndims-1), transformseq.PlainTransforms(trimmedtransforms, self.transforms.todim, self.ndims-1), transformseq.PlainTransforms(trimmedopposites, self.transforms.todim, self.ndims-1))
@@ -1665,7 +1669,7 @@ class HierarchicalTopology(Topology):
         opposites.append(level.opposites[indices])
     self.levels = tuple(levels)
 
-    super().__init__(references, transformseq.chain(transforms, basetopo.transforms.todim, basetopo.ndims), transformseq.chain(opposites, basetopo.transforms.todim, basetopo.ndims))
+    super().__init__(references, transformseq.chain(transforms, basetopo.transforms.todims, basetopo.ndims), transformseq.chain(opposites, basetopo.transforms.todims, basetopo.ndims))
 
   def __and__(self, other):
     if not isinstance(other, HierarchicalTopology) or self.basetopo != other.basetopo:
@@ -1780,7 +1784,13 @@ class HierarchicalTopology(Topology):
         hreferences = hreferences.chain(level.interfaces.references.take(selection))
         htransforms.append(level.interfaces.transforms[selection])
         hopposites.append(level.interfaces.opposites[selection])
-    return Topology(hreferences, transformseq.chain(htransforms, self.transforms.todim, self.ndims-1), transformseq.chain(hopposites, self.transforms.todim, self.ndims-1))
+    return Topology(hreferences, transformseq.chain(htransforms, self.transforms.todims, self.ndims-1), transformseq.chain(hopposites, self.transforms.todims, self.ndims-1))
+
+  @staticmethod
+  def _transform_poly(items, coeffs):
+    items = tuple(items)
+    assert len(items) == 1
+    return items[0].transform_poly(coeffs)
 
   @log.withcontext
   def basis(self, name, *args, truncation_tolerance=1e-15, **kwargs):
@@ -1872,8 +1882,11 @@ class HierarchicalTopology(Topology):
     for ilevel, (level, indices) in enumerate(zip(self.levels, self._indices_per_level)):
       for ilocal in indices:
 
-        hbasis_trans = transform.canonical(level.transforms[ilocal])
-        tail = hbasis_trans[len(hbasis_trans)-ilevel:]
+        hbasis_trans = level.transforms[ilocal].canonical
+        tail = transform.TransformChains(*(chain[len(chain)-ilevel:] for chain in hbasis_trans))
+        lentail = len(tail[0])
+        if not all(len(chain) == lentail for chain in tail):
+          raise NotImplementedError('variable length tails, possibly caused by anisotropic refinements, are not supported')
         trans_dofs = []
         trans_coeffs = []
 
@@ -1894,8 +1907,8 @@ class HierarchicalTopology(Topology):
               mypoly = ubases[h].get_coefficients(ilocal)
               trans_coeffs.append(mypoly[myactive])
 
-            if h < len(tail):
-              trans_coeffs = [tail[h].transform_poly(c) for c in trans_coeffs]
+            if h < lentail:
+              trans_coeffs = [self._transform_poly((chain[h] for chain in tail), c) for c in trans_coeffs]
 
         else: # truncated hierarchical basis
 
@@ -1903,8 +1916,8 @@ class HierarchicalTopology(Topology):
             mydofs = ubases[h].get_dofs(ilocal)
             mypoly = ubases[h].get_coefficients(ilocal)
 
-            truncpoly = mypoly if h == len(tail) \
-              else numpy.tensordot(numpy.tensordot(tail[h].transform_poly(mypoly), project[...,mypassive], self.ndims), truncpoly[mypassive], 1)
+            truncpoly = mypoly if h == lentail \
+              else numpy.tensordot(numpy.tensordot(self._transform_poly((chain[h] for chain in tail), mypoly), project[...,mypassive], self.ndims), truncpoly[mypassive], 1)
 
             imyactive = numeric.sorted_index(ubasis_active[h], mydofs, missing=-1)
             myactive = numpy.greater_equal(imyactive, 0) & numpy.greater(abs(truncpoly), truncation_tolerance).any(axis=tuple(range(1,truncpoly.ndim)))
@@ -2091,8 +2104,8 @@ class MultipatchTopology(Topology):
 
     super().__init__(
       util.sum(patch.topo.references for patch in self.patches),
-      transformseq.chain([patch.topo.transforms for patch in self.patches], self.patches[0].topo.transforms.todim, self.patches[0].topo.ndims),
-      transformseq.chain([patch.topo.opposites for patch in self.patches], self.patches[0].topo.transforms.todim, self.patches[0].topo.ndims))
+      transformseq.chain([patch.topo.transforms for patch in self.patches], self.patches[0].topo.transforms.todims, self.patches[0].topo.ndims),
+      transformseq.chain([patch.topo.opposites for patch in self.patches], self.patches[0].topo.transforms.todims, self.patches[0].topo.ndims))
 
   @property
   def _patchinterfaces(self):
@@ -2269,7 +2282,7 @@ class MultipatchTopology(Topology):
           references = references[tuple(_ if i == boundary.dim else slice(None) for i in range(self.ndims))]
           references = boundary.apply_transform(references)[..., 0]
           references = tuple(references.flat)
-        transforms = numeric.asobjvector(btopo.transforms).reshape(btopo.shape)
+        transforms = numeric.asobjvector(chain for chain, in btopo.transforms).reshape(btopo.shape)
         transforms = transforms[tuple(_ if i == boundary.dim else slice(None) for i in range(self.ndims))]
         transforms = boundary.apply_transform(transforms)[..., 0]
         pairs.append(tuple(transforms.flat))

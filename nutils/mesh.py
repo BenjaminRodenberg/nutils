@@ -562,9 +562,9 @@ def simplex(nodes, cnodes, coords, tags, btags, ptags, name='simplex'):
       ioppelem = connectivity[ielem, iedge]
       simplices, transforms, opposites = bitems if ioppelem == -1 else iitems
       simplices.append(tuple(nodes[ielem][:iedge])+tuple(nodes[ielem][iedge+1:]))
-      transforms.append(topo.transforms[ielem].append(transform.SimplexEdge(ndims, iedge)))
+      transforms.append(topo.transforms[ielem][0].append(transform.SimplexEdge(ndims, iedge)))
       if opposites is not None:
-        opposites.append(topo.transforms[ioppelem].append(transform.SimplexEdge(ndims, tuple(connectivity[ioppelem]).index(ielem))))
+        opposites.append(topo.transforms[ioppelem][0].append(transform.SimplexEdge(ndims, tuple(connectivity[ioppelem]).index(ielem))))
     for groups, (simplices, transforms, opposites) in (bgroups, bitems), (igroups, iitems):
       if simplices:
         transforms = transformseq.PlainTransforms(transforms, ndims, ndims-1)
@@ -576,7 +576,7 @@ def simplex(nodes, cnodes, coords, tags, btags, ptags, name='simplex'):
     ptrans = [transform.Matrix(linear=numpy.zeros(shape=(ndims,0)), offset=offset) for offset in numpy.eye(ndims+1)[:,1:]]
     pmap = {inode: numpy.array(numpy.equal(nodes, inode).nonzero()).T for inode in set.union(*map(set, ptags.values()))}
     for pname, inodes in ptags.items():
-      ptransforms = transformseq.PlainTransforms([topo.transforms[ielem].append(ptrans[ivertex]) for inode in inodes for ielem, ivertex in pmap[inode]], ndims, 0)
+      ptransforms = transformseq.PlainTransforms([topo.transforms[ielem][0].append(ptrans[ivertex]) for inode in inodes for ielem, ivertex in pmap[inode]], ndims, 0)
       preferences = References.uniform(element.getsimplex(0), len(ptransforms))
       pgroups[pname] = topology.Topology(preferences, ptransforms, ptransforms)
 
@@ -610,9 +610,9 @@ def simplex(nodes, cnodes, coords, tags, btags, ptags, name='simplex'):
         else:
           continue
         simplices.append(tuple(nodes[ielem][:iedge])+tuple(nodes[ielem][iedge+1:]))
-        transforms.append(topo.transforms[ielem].append(transform.SimplexEdge(ndims, iedge)))
+        transforms.append(topo.transforms[ielem][0].append(transform.SimplexEdge(ndims, iedge)))
         if ioppelem != -1:
-          opposites.append(topo.transforms[ioppelem].append(transform.SimplexEdge(ndims, ioppedge)))
+          opposites.append(topo.transforms[ioppelem][0].append(transform.SimplexEdge(ndims, ioppedge)))
       for groups, (simplices, transforms, opposites) in (vbgroups, bitems), (vigroups, iitems):
         if simplices:
           transforms = transformseq.PlainTransforms(transforms, ndims, ndims-1)
@@ -620,7 +620,7 @@ def simplex(nodes, cnodes, coords, tags, btags, ptags, name='simplex'):
           groups[bname] = topology.SimplexTopology(simplices, transforms, opposites)
     vpgroups = {}
     for pname, inodes in ptags.items():
-      ptransforms = transformseq.PlainTransforms([topo.transforms[ielem].append(ptrans[ivertex]) for inode in inodes for ielem, ivertex in pmap[inode] if keep[ielem]], ndims, 0)
+      ptransforms = transformseq.PlainTransforms([topo.transforms[ielem][0].append(ptrans[ivertex]) for inode in inodes for ielem, ivertex in pmap[inode] if keep[ielem]], ndims, 0)
       preferences = References.uniform(element.getsimplex(0), len(ptransforms))
       vpgroups[pname] = topology.Topology(preferences, ptransforms, ptransforms)
     vgroups[name] = vtopo.withgroups(bgroups=vbgroups, igroups=vigroups, pgroups=vpgroups)
@@ -679,7 +679,7 @@ def unitsquare(nelems, etype):
 
     if etype == 'mixed':
       references = list(topo.references)
-      transforms = list(topo.transforms)
+      transforms = list(chain for chain, in topo.transforms)
       square = element.getsimplex(1)**2
       connectivity = list(topo.connectivity)
       isquares = [i * nelems + j for i in range(nelems) for j in range(nelems) if i%2==j%3]
