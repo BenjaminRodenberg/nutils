@@ -148,6 +148,31 @@ class TransformItem(types.Singleton):
   def swapdown(self, other):
     return None
 
+  def factorize(self, todims):
+    if sum(todims) != self.todim:
+      raise ValueError('`todims` does not sum up to `self.todim`')
+    i = 0
+    while todims and todims[0] == 0:
+      i += 1
+      todims = todims[1:]
+    j = 0
+    while todims and todims[-1] == 0:
+      j += 1
+      todims = todims[:-1]
+    if not todims:
+      factorized = ()
+    elif todims == (self.todim,):
+      factorized = self,
+    else:
+      factorized = self.factorize_checked_and_trimmed(todims)
+    return (Identity(0),)*i + factorized + (Identity(0),)*j
+
+  def factorize_checked_and_trimmed(self, todims):
+    if todims == (self.todim,):
+      return self,
+    else:
+      raise ValueError('cannot factorize this transform item into the given todims')
+
 stricttransformitem = types.strict[TransformItem]
 stricttransform = types.tuple[stricttransformitem]
 
@@ -316,6 +341,9 @@ class Identity(Shift):
 
   def __str__(self):
     return 'x'
+
+  def factorize_checked_and_trimmed(self, todims):
+    return tuple(map(Identity, todims))
 
 class Scale(Square):
   '''Affine transformation :math:`x ↦ a x + b`, with :math:`a` a scalar
@@ -532,6 +560,12 @@ class TensorEdge1(Updim):
   def flipped(self):
     return TensorEdge1(self.trans.flipped, self.fromdim-self.trans.fromdim)
 
+  def factorize_checked_and_trimmed(self, todims):
+    for i in range(len(todims)+1):
+      if sum(todims[:i]) == self.trans.todim:
+        return self.trans.factorize_checked_and_trimmed(todims[:i]) + tuple(map(Identity, todims[i:]))
+    raise ValueError('cannot factorize this transform item into the given todims')
+
 class TensorEdge2(Updim):
 
   __slots__ = 'trans'
@@ -567,6 +601,12 @@ class TensorEdge2(Updim):
   def flipped(self):
     return TensorEdge2(self.fromdim-self.trans.fromdim, self.trans.flipped)
 
+  def factorize_checked_and_trimmed(self, todims):
+    for i in reversed(range(len(todims)+1)):
+      if sum(todims[i:]) == self.trans.todim:
+        return tuple(map(Identity, todims[:i])) + self.trans.factorize_checked_and_trimmed(todims[i:])
+    raise ValueError('cannot factorize this transform item into the given todims')
+
 class TensorChild(Square):
 
   __slots__ = 'trans1', 'trans2'
@@ -583,6 +623,15 @@ class TensorChild(Square):
   @property
   def det(self):
     return self.trans1.det * self.trans2.det
+
+  def factorize_checked_and_trimmed(self, todims):
+    for i in range(len(todims)+1):
+      if sum(todims[i:]) == self.trans1.todim:
+        j = i
+        while j < len(todims) and todims[j] == 0:
+          j += 1
+        return self.trans1.factorize_checked_and_trimmed(todims[:i]) + (Identity(0),)*(j-i) + self.trans2.factorize_checked_and_trimmed(todims[j:])
+    raise ValueError('cannot factorize this transform item into the given todims')
 
 class Identifier(Identity):
   '''Generic identifier
@@ -810,6 +859,140 @@ class TransformChain:
       if item.todim == item.fromdim + 1:
         linear = numpy.concatenate([linear, item.ext[:,_]], axis=1)
     assert linear.shape == (self.todim, self.todim)
+    return linear
+
+class TransformChains:
+  '''A list of chains of :class:`TransformItem`.
+
+  Parameters
+  ----------
+  *chains : :class:`TransformChain`
+      The list of transform chains.
+
+  Attributes
+  ----------
+  nchains : :class:`int`
+      The number of individual transform chains.
+  todims : :class:`tuple` of :class:`int`
+      The dimensions the individual transform chains map to.
+  todim : :class:`int`
+      The sum of dimensions the individual transform chains maps to.
+  fromdims : :class:`tuple` of :class:`int`
+      The dimensions the individual transform chains map from.
+  fromdim : :class:`int`
+      The sum of dimensions the individual transform chains map from.
+  '''
+
+  __slots__ = 'nchains', 'todims', 'todim', 'fromdim', 'fromdims', '_chains', '_toslices', '_fromslices'
+
+  @classmethod
+  def empty(cls, *todims: int) -> 'TransformChains':
+    '''Create empty chains with the given dimensions.'''
+    return cls(*map(TransformChain.empty, todims))
+
+  def __init__(self, *chains: TransformChain) -> None:
+    assert all(isinstance(chain, TransformChain) for chain in chains)
+    self.nchains = len(chains)
+    self._chains = tuple(chains)
+    self.todims = tuple(chain.todim for chain in chains)
+    self.todim = sum(self.todims)
+    self.fromdims = tuple(chain.fromdim for chain in chains)
+    self.fromdim = sum(self.fromdims)
+    self._toslices = tuple(slice(l, r) for l, r in util.pairwise(util.cumsum(self.todims+(0,))))
+    self._fromslices = tuple(slice(l, r) for l, r in util.pairwise(util.cumsum(self.fromdims+(0,))))
+
+  def __len__(self) -> int:
+    return len(self._chains)
+
+  def get_chain(self, index: int) -> TransformChain:
+    return self._chains[index]
+
+  def __iter__(self) -> Iterator[TransformChain]:
+    return iter(self._chains)
+
+  def __reversed__(self) -> Iterator[TransformChain]:
+    return reversed(self._chains)
+
+  def __getitem__(self, index):
+    if isinstance(index, slice):
+      return TransformChains(*self._chains[index])
+    elif isinstance(index, int):
+      return self._chains[index]
+    else:
+      raise IndexError
+
+  def __eq__(self, other) -> bool:
+    return type(self) == type(other) and self._chains == other._chains
+
+  def __hash__(self) -> int:
+    return hash(self._chains)
+
+  def __repr__(self) -> str:
+    return 'TransformChains({})'.format(', '.join(map(repr, self._chains)))
+
+  def apply(self, points: numpy.ndarray) -> numpy.ndarray:
+    if points.ndim == 0:
+      raise ValueError('Expected an array with at least 1 dimension but got 0.')
+    if points.shape[-1] != self.fromdim:
+      raise ValueError('The last axis of `points` must have length {} but got {}.'.format(self.fromdim, points.shape[-1]))
+    result = numpy.concatenate([chain.apply(points[...,s]) for chain, s in zip(self._chains, self._fromslices)], axis=-1)
+    assert result.shape[-1] == self.todim
+    return result
+
+  def append(self, item: TransformItem) -> 'TransformChains':
+    '''Append a :class:`TransformItem` to this list of chains.'''
+    if item.todim != self.fromdim:
+      raise ValueError('Expected a `TransformItem` with todim={} but got {}.'.format(self.fromdim, item.todim))
+    return TransformChains(*(chain.append(t) for chain, t in zip(self._chains, item.factorize(self.fromdims))))
+
+  def remove_head(self, head: TransformItem) -> 'TransformChains':
+    '''Remove the given head from this list of chains.
+
+    Parameters
+    ----------
+    head : :class:`TransformItem`
+        The transform item to remove from this list of chains.
+
+    Returns
+    -------
+    tail : :class:`TransformChains`
+        The remainder of the chains after removing the head.
+
+    Raises
+    ------
+    HeadDoesNotMatch
+        If this list of chains does not start with the given head.
+    '''
+
+    if head.todim != self.todim:
+      raise ValueError('Expected a `TransformItem` with todim {} but got {}.'.format(self.todim, head.todim))
+    return TransformChains(*(chain.remove_head(h) for chain, h in zip(self._chains, head.factorize(self.todims))))
+
+  @property
+  def canonical(self) -> 'TransformChains':
+    return TransformChains(*(chain.canonical for chain in self._chains))
+
+  @property
+  def uppermost(self) -> 'TransformChains':
+    return TransformChains(*(chain.uppermost for chain in self._chains))
+
+  def linearfrom(self, fromdim: int) -> numpy.ndarray:
+    if len(self._chains) != 1:
+      raise NotImplementedError
+    return self._chains[0].linearfrom(fromdim)
+
+  @property
+  def linear(self) -> numpy.ndarray:
+    linear = numpy.zeros((self.todim, self.fromdim), dtype=float)
+    for chain, s, t in zip(self._chains, self._toslices, self._fromslices):
+      linear[s, t] = chain.linear
+    return linear
+
+  @property
+  def extended_linear(self) -> numpy.ndarray:
+    linear = numpy.zeros((self.todim, self.todim), dtype=float)
+    for chain, s in zip(self._chains, self._toslices):
+      linear[s, s] = chain.extended_linear
     return linear
 
 # vim:sw=2:sts=2:et
