@@ -22,10 +22,15 @@
 The transform module.
 """
 
+from typing import Iterator, Optional
 from . import cache, numeric, util, types, warnings
 import numpy, collections, itertools, functools, operator
 _ = numpy.newaxis
 
+## EXCEPTIONS
+
+class HeadDoesNotMatch(ValueError):
+  '''The :class:`TransformChain` does not start with the given head :class:`TransformItem`.'''
 
 ## TRANSFORM CHAIN OPERATIONS
 
@@ -596,5 +601,215 @@ class Identifier(Identity):
 
   def __str__(self):
     return ':'.join(map(str, self._args))
+
+## TRANSFORM CHAIN
+
+class TransformChain:
+  '''A chain of :class:`TransformItem`.
+
+  Parameters
+  ----------
+  *items : :class:`TransformItem`
+      The list of transform items that comprises the chain.
+  todim : :class:`int`, optional
+      The dimension the transform chain maps to. If the transform chain is
+      empty, this argument must be supplied.
+
+  Attributes
+  ----------
+  todim : :class:`int`
+      The dimension the transform chain maps to.
+  fromdim : :class:`int`
+      The dimension the transform chain maps from.
+  '''
+
+  __slots__ = '_items', 'todim', 'fromdim'
+
+  @classmethod
+  def empty(cls, todim: int) -> 'TransformChain':
+    '''Create an empty chain with the given dimension.'''
+    return cls(todim=todim)
+
+  def __init__(self, *items: TransformItem, todim: Optional[int] = None) -> None:
+    self._items = tuple(items)
+    assert all(isinstance(item, TransformItem) for item in self._items)
+    if self._items:
+      self.todim = self._items[0].todim
+      if todim is not None and self._items[0].todim != todim:
+        raise ValueError('The `todim` of the first item in this chain does not match the given `todim`.')
+    elif todim is not None:
+      self.todim = todim
+    else:
+      raise ValueError('An empty `TransformChain` must be initialized with a `todim`.')
+    self.fromdim = self._items[-1].fromdim if self._items else self.todim
+
+  def __len__(self) -> int:
+    return len(self._items)
+
+  def get_item(self, index: int) -> TransformItem:
+    return self._items[index]
+
+  def __iter__(self) -> Iterator[TransformItem]:
+    return iter(self._items)
+
+  def __reversed__(self) -> Iterator[TransformItem]:
+    return reversed(self._items)
+
+  def __getitem__(self, index):
+    if isinstance(index, slice):
+      start, stop, step = index.indices(len(self._items))
+      if step != 1:
+        raise IndexError
+      if start < len(self._items):
+        return TransformChain(*self._items[start:stop], todim=self._items[start].todim)
+      else:
+        return TransformChain(todim=self.fromdim)
+    elif isinstance(index, int):
+      return self._items[index]
+    else:
+      raise IndexError
+
+  def __eq__(self, other) -> bool:
+    return type(self) == type(other) and self._items == other._items and self.todim == other.todim
+
+  def __hash__(self) -> int:
+    return hash((self._items, self.todim))
+
+  def __repr__(self) -> str:
+    return 'TransformChain({})'.format(', '.join(map(repr, self._items))) if self._items else 'TransformChain(todim={})'.format(self.todim)
+
+  def extend(self, chain: 'TransformChain') -> 'TransformChain':
+    if self.fromdim != chain.todim:
+      raise ValueError('Cannot append {} with todim {} to this chain with fromdim {}.'.format(chain, chain.todim, self.fromdim))
+    return TransformChain(*self._items, *chain._items, todim=self.todim)
+
+  def append(self, item: TransformItem) -> 'TransformChain':
+    '''Append a :class:`TransformItem` to this chain.'''
+    if self.fromdim != item.todim:
+      raise ValueError('Cannot append {} with todim {} to this chain with fromdim {}.'.format(item, item.todim, self.fromdim))
+    return TransformChain(*self._items, item, todim=self.todim)
+
+  def remove_head(self, head: TransformItem) -> 'TransformChain':
+    '''Remove the given head from this chain.
+
+    Parameters
+    ----------
+    head : :class:`TransformItem`
+        The transform item to remove from this chain.
+
+    Returns
+    -------
+    tail : :class:`TransformChain`
+        The remainder of this chain after removing the head.
+
+    Raises
+    ------
+    HeadDoesNotMatch
+        If this chain does not start with the given head.
+    '''
+
+    if head.todim != self.todim:
+      raise ValueError('Expected a `TransformItem` with todim {} but got {}.'.format(self.todim, head.todim))
+    if head.todim == head.fromdim:
+      items = self.uppermost._items
+    else:
+      items = self.canonical._items
+    if items and items[0] == head:
+      return TransformChain(*items[1:], todim=head.fromdim)
+    else:
+      raise HeadDoesNotMatch('{} does not start with {}'.format(self, head))
+
+  @types.lru_cache
+  def apply(self, points: numpy.ndarray) -> numpy.ndarray:
+    for trans in reversed(self._items):
+      points = trans.apply(points)
+    return points
+
+  @property
+  def _n_ascending(self) -> int:
+    # number of ascending transform items counting from root (0). this is a
+    # temporary hack required to deal with Bifurcate/Slice; as soon as we have
+    # proper tensorial topologies we can switch back to strictly ascending
+    # transformation chains.
+    for n, trans in enumerate(self._items):
+      if trans.todim is not None and trans.todim < trans.fromdim:
+        return n
+    return len(self._items)
+
+  @property
+  def canonical(self) -> 'TransformChain':
+    # keep at lowest ndims possible; this is the required form for bisection
+    n = self._n_ascending
+    if n < 2:
+      return self
+    items = list(self._items)
+    i = 0
+    while items[i].fromdim > items[n-1].fromdim:
+      swapped = items[i+1].swapdown(items[i])
+      if swapped:
+        items[i:i+2] = swapped
+        i -= i > 0
+      else:
+        i += 1
+    return TransformChain(*items, todim=self.todim)
+
+  @property
+  def uppermost(self) -> 'TransformChain':
+    # bring to highest ndims possible
+    n = self._n_ascending
+    if n < 2:
+      return self
+    items = list(self._items)
+    i = n
+    while items[i-1].todim < items[0].todim:
+      swapped = items[i-2].swapup(items[i-1])
+      if swapped:
+        items[i-2:i] = swapped
+        i += i < n
+      else:
+        i -= 1
+    return TransformChain(*items, todim=self.todim)
+
+  def promote(self, ndims: int) -> 'TransformChain':
+    # swap transformations such that ndims is reached as soon as possible, and
+    # then maintained as long as possible (i.e. proceeds as canonical).
+    for i, item in enumerate(self._items): # NOTE possible efficiency gain using bisection
+      if item.fromdim == ndims:
+        return self[:i+1].canonical.extend(self[i+1:].uppermost)
+    return self # NOTE at this point promotion essentially failed, maybe it's better to raise an exception
+
+  def linearfrom(self, fromdim: int) -> numpy.ndarray:
+    while self and fromdim < self.fromdim:
+      self = self[:-1]
+    if not self:
+      assert self.fromdim == fromdim
+      return numpy.eye(fromdim)
+    linear = numpy.eye(self.fromdim)
+    for transitem in reversed(self.uppermost._items):
+      linear = numpy.dot(transitem.linear, linear)
+      if transitem.todim == transitem.fromdim + 1:
+        linear = numpy.concatenate([linear, transitem.ext[:,_]], axis=1)
+    assert linear.shape[0] == self.todim
+    return linear[:,:fromdim] if linear.shape[1] >= fromdim \
+      else numpy.concatenate([linear, numpy.zeros((self.todim, fromdim-linear.shape[1]))], axis=1)
+
+  @property
+  def linear(self) -> numpy.ndarray:
+    linear = numpy.eye(self.fromdim)
+    for item in reversed(self._items):
+      linear = numpy.dot(item.linear, linear)
+    assert linear.shape == (self.todim, self.fromdim)
+    return linear
+
+  @property
+  def extended_linear(self) -> numpy.ndarray:
+    linear = numpy.eye(self.fromdim)
+    for item in reversed(self._items):
+      linear = numpy.dot(item.linear, linear)
+      assert item.fromdim <= item.todim <= item.fromdim + 1
+      if item.todim == item.fromdim + 1:
+        linear = numpy.concatenate([linear, item.ext[:,_]], axis=1)
+    assert linear.shape == (self.todim, self.todim)
+    return linear
 
 # vim:sw=2:sts=2:et
