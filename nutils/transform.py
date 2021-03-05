@@ -414,6 +414,9 @@ class SimplexEdge(Updim):
     if isinstance(other, SimplexChild):
       ichild, iedge = self.swap[self.iedge][other.ichild]
       return SimplexChild(self.todim, ichild), SimplexEdge(self.todim, iedge, self.inverted)
+    elif self.fromdim == 0 and other == Identity(0):
+      ichild, iedge = self.swap[self.iedge][0]
+      return SimplexChild(self.todim, ichild), SimplexEdge(self.todim, iedge, self.inverted)
 
   def swapdown(self, other):
     # prioritize decending transformations, i.e. change scale << updim to updim << scale
@@ -425,13 +428,15 @@ class SimplexEdge(Updim):
         except ValueError:
           pass
         else:
-          return SimplexEdge(self.todim, iedge, self.inverted), SimplexChild(self.fromdim, ichild)
+          return SimplexEdge(self.todim, iedge, self.inverted), SimplexChild(self.fromdim, ichild) if self.fromdim else Identity(0)
 
 class SimplexChild(Square):
 
   __slots__ = 'ichild',
 
   def __init__(self, ndims, ichild):
+    if ndims == 0:
+      raise ValueError('Cannot create a 0D `SimplexChild`, use `Identity(0)` instead.')
     self.ichild = ichild
     if ichild <= ndims:
       linear = numpy.eye(ndims) * .5
@@ -501,7 +506,7 @@ class TensorEdge1(Updim):
       swapped = self.trans.swapup(other.trans1)
       trans2 = other.trans2
     elif isinstance(other, (TensorChild, SimplexChild)) and other.fromdim == other.todim and not self.trans.fromdim:
-      swapped = self.trans.swapup(SimplexChild(0, 0))
+      swapped = self.trans.swapup(Identity(0))
       trans2 = other
     else:
       swapped = None
@@ -536,7 +541,7 @@ class TensorEdge2(Updim):
       swapped = self.trans.swapup(other.trans2)
       trans1 = other.trans1
     elif isinstance(other, (TensorChild, SimplexChild)) and other.fromdim == other.todim and not self.trans.fromdim:
-      swapped = self.trans.swapup(SimplexChild(0, 0))
+      swapped = self.trans.swapup(Identity(0))
       trans1 = other
     else:
       swapped = None
