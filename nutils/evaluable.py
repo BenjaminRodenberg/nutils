@@ -2864,6 +2864,31 @@ class DerivativeTargetBase(Array):
   def isconstant(self):
     return False
 
+class WithDerivative(Array):
+
+  # TODO: add `self._var` to `self.arguments`?
+
+  __slots__ = '_func', '_var', '_deriv'
+
+  @types.apply_annotations
+  def __init__(self, func:asarray, var:types.strict[DerivativeTargetBase], derivative:asarray):
+    self._func = func
+    self._var = var
+    self._deriv = derivative
+    super().__init__(args=[func], shape=func._axes, dtype=func.dtype)
+
+  def evalf(self, func):
+    return func
+
+  def _derivative(self, var, seen):
+    if var == self._var:
+      return self._deriv
+    else:
+      return derivative(self._func, var, seen)
+
+  def _optimized_for_numpy(self):
+    return self._func
+
 class Argument(DerivativeTargetBase):
   '''Array argument, to be substituted before evaluation.
 
