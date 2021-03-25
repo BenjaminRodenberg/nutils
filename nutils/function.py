@@ -658,7 +658,16 @@ class _TransformsCoords(Array):
   def lower(self, *, transform_chains: Tuple[evaluable.TransformChain] = (), coordinates: Tuple[evaluable.Array] = (), **kwargs: Any) -> evaluable.Array:
     assert transform_chains and coordinates and len(transform_chains) == len(coordinates)
     index, tail = evaluable.TransformsIndexWithTail(self._transforms, transform_chains[0])
-    return evaluable.ApplyTransforms(tail, coordinates[0], self.shape[0])
+    head = evaluable.TransformChainFromSequence(self._transforms, index)
+    linear = evaluable.TransformExtendedLinear(head, self._transforms.todim)[:,:self._transforms.fromdim]
+    if self._transforms.todim == self._transforms.fromdim:
+      inv_linear = evaluable.inverse(linear)
+    else:
+      matmul = lambda a, b: evaluable.dot(evaluable.insertaxis(a, 2, b.shape[1]), evaluable.insertaxis(b, 0, a.shape[0]), 1)
+      inv_linear = matmul(evaluable.inverse(matmul(linear.T, linear)), linear.T)
+    inv_linear = _prepend_points(inv_linear, transform_chains=transform_chains, coordinates=coordinates, **kwargs)
+    coords = evaluable.ApplyTransforms(tail, coordinates[0], self._transforms.fromdim)
+    return evaluable.WithDerivative(coords, evaluable.IdentifierDerivativeTarget(self._space, (self._space.dim,)), inv_linear)
 
 class _Derivative(Array):
 
