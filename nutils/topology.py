@@ -316,9 +316,12 @@ class Topology(types.Singleton):
       W = numpy.zeros(onto.shape[0])
       I = numpy.zeros(onto.shape[0], dtype=bool)
       ielem_arg = evaluable.Argument('_project_index', (), dtype=int)
-      lower_args = dict(transform_chains=(self.transforms.get_evaluable(ielem_arg), self.opposites.get_evaluable(ielem_arg)), coordinates=(self.references.getpoints('bezier', 2).get_evaluable_coords(ielem_arg),)*2)
-      fun = function.lower(**lower_args)
-      data = evaluable.Tuple(evaluable.Tuple([fun, onto_f.simplified, evaluable.Tuple(onto_ind)]) for onto_ind, onto_f in evaluable.blocks(onto.lower(**lower_args))).optimized_for_numpy
+      coords = self.references.getpoints('bezier', 2).get_evaluable_coords(ielem_arg)
+      lower_data = function.LowerData.from_unfactorized_evaluables(self.spaces, self.transforms.get_evaluable(ielem_arg), coords, 0)
+      if self.opposites != self.transforms:
+        lower_data = lower_data.with_opposite(function.LowerData.from_unfactorized_evaluables(self.spaces, self.opposites.get_evaluable(ielem_arg), coords, 0))
+      fun = function.lower(lower_data)
+      data = evaluable.Tuple(evaluable.Tuple([fun, onto_f.simplified, evaluable.Tuple(onto_ind)]) for onto_ind, onto_f in evaluable.blocks(onto.lower(lower_data))).optimized_for_numpy
       for ielem in range(len(self)):
         for fun_, onto_f_, onto_ind_ in data.eval(_project_index=ielem, **arguments or {}):
           onto_f_ = onto_f_.swapaxes(0,1) # -> dof axis, point axis, ...
@@ -374,15 +377,18 @@ class Topology(types.Singleton):
 
     refs = []
     if leveltopo is None:
-      ielem_arg = evaluable.Argument('_trim_index', (), dtype=int)
-      levelset = levelset.lower(transform_chains=(self.transforms.get_evaluable(ielem_arg), self.opposites.get_evaluable(ielem_arg)), coordinates=(self.references.getpoints('vertex', maxrefine).get_evaluable_coords(ielem_arg),)*2).optimized_for_numpy
+      lower_data = self.sample('vertex', maxrefine).get_lower_data(evaluable.Argument('_trim_index', (), int))
+      levelset = levelset.lower(lower_data).optimized_for_numpy
       with log.iter.percentage('trimming', range(len(self)), self.references) as items:
         for ielem, ref in items:
           levels = levelset.eval(_trim_index=ielem, **arguments)
           refs.append(ref.trim(levels, maxrefine=maxrefine, ndivisions=ndivisions))
     else:
       log.info('collecting leveltopo elements')
-      levelset = levelset.lower(transform_chains=(evaluable.SelectChain(0), evaluable.SelectChain(1)), coordinates=(evaluable.Points(evaluable.NPoints(), self.ndims),)*2).optimized_for_numpy
+      transform_chains = transform.EvaluableTransformChains.from_argument('_trans', self.transforms.todims)
+      coords = evaluable.Points(evaluable.NPoints(), self.ndims)
+      lower_data = function.LowerData.from_unfactorized_evaluables(self.spaces, transform_chains, coords, 0)
+      levelset = levelset.lower(lower_data).optimized_for_numpy
       bins = [set() for ielem in range(len(self))]
       for trans in leveltopo.transforms:
         ielem, (tail,) = self.transforms.index_with_tail(trans)
@@ -400,7 +406,7 @@ class Topology(types.Singleton):
             leveltrans = trans
             for item in tail:
               leveltrans = leveltrans.append(item)
-            levels[indices] = levelset.eval(_transforms=(transform.TransformChains(leveltrans),), _points=points, **arguments)
+            levels[indices] = levelset.eval(_trans=transform.TransformChains(leveltrans), _points=points, **arguments)
             mask[indices] = False
           refs.append(ref.trim(levels, maxrefine=maxrefine, ndivisions=ndivisions))
       log.debug('cache', fcache.stats)
@@ -536,10 +542,10 @@ class Topology(types.Singleton):
     points = parallel.shempty((len(coords),len(geom)), dtype=float)
     _ielem = evaluable.Argument('_locate_ielem', shape=(), dtype=int)
     _point = evaluable.Argument('_locate_point', shape=(self.ndims,))
-    lower_args = dict(
-      transform_chains = (self.transforms.get_evaluable(_ielem), self.opposites.get_evaluable(_ielem)),
-      coordinates = (_point, _point))
-    xJ = evaluable.Tuple((geom.lower(**lower_args), function.localgradient(geom, self.ndims).lower(**lower_args))).simplified
+    lower_data = function.LowerData.from_unfactorized_evaluables(self.spaces, self.transforms.get_evaluable(_ielem), _point, 0)
+    if self.opposites != self.transforms:
+      lower_data = lower_data.with_opposite(function.LowerData.from_unfactorized_evaluables(self.spaces, self.opposites.get_evaluable(_ielem), _point, 0))
+    xJ = evaluable.Tuple((geom.lower(lower_data), function.derivative(geom, function.Argument('_locate_point', (self.ndims,), dtype=float)).lower(lower_data))).simplified
     arguments = dict(arguments or ())
     with parallel.ctxrange('locating', len(coords)) as ipoints:
       for ipoint in ipoints:

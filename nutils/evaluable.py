@@ -2875,6 +2875,7 @@ class WithDerivative(Array):
     self._func = func
     self._var = var
     self._deriv = derivative
+    assert equalshape(self._func.shape+self._var.shape, self._deriv.shape)
     super().__init__(args=[func], shape=func._axes, dtype=func.dtype)
 
   def evalf(self, func):
@@ -3884,6 +3885,32 @@ def determinant(arg, axes=(-2,-1)):
 
 def inverse(arg, axes=(-2,-1)):
   return Transpose.from_end(Inverse(Transpose.to_end(arg, *axes)), *axes)
+
+def matmat(left, right):
+  left = asarray(left)
+  right = asarray(right)
+  if left.ndim < 2:
+    raise ValueError('Expected a left operand with dimension 2 or larger but got one with dimension {}.'.format(left.ndim))
+  if right.ndim != left.ndim:
+    raise ValueError('Expected two arrays with the same dimension but the left operand has dimension {} and the right dimension {}.'.format(left.ndim, right.ndim))
+  if not equalshape(left.shape[:-2], right.shape[:-2]):
+    raise ValueError('The leading shapes of the left and right operands differ.')
+  if not equalindex(left.shape[-1], right.shape[-2]):
+    raise ValueError('The number of columns of the left operand does not match the number of rows of the right operand.')
+  return dot(insertaxis(left, -1, right.shape[-1]), insertaxis(right, -3, left.shape[-2]), -2)
+
+def matvec(left, right):
+  left = asarray(left)
+  right = asarray(right)
+  if left.ndim < 2:
+    raise ValueError('Expected a left operand with dimension 2 or larger but got one with dimension {}.'.format(left.ndim))
+  if right.ndim != left.ndim - 1:
+    raise ValueError('Expected a right operand with dimension one smaller than the left operand but got {} and {} for left and right respectively.'.format(left.ndim, right.ndim))
+  if not equalshape(left.shape[:-2], right.shape[:-1]):
+    raise ValueError('The leading shapes of the left and right operands differ.')
+  if not equalindex(left.shape[-1], right.shape[-1]):
+    raise ValueError('The number of columns of the left operand does not match the number of rows of the right operand.')
+  return dot(left, insertaxis(right, -2, left.shape[-2]), -1)
 
 def takediag(arg, axis=-2, rmaxis=-1):
   arg = asarray(arg)

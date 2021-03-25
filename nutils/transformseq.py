@@ -22,6 +22,7 @@
 
 from . import types, numeric, util, transform, element, warnings, evaluable
 from .elementseq import References
+from typing import Tuple, Optional
 import abc, itertools, operator, numpy, functools
 
 class Transforms(types.Singleton):
@@ -325,21 +326,27 @@ class Transforms(types.Singleton):
 
     yield self
 
-  def get_evaluable(self, index: evaluable.Array) -> evaluable.TransformChain:
+  def get_evaluable(self, index: evaluable.Array) -> transform.EvaluableTransformChains:
     '''Return the evaluable transform chain at the given index.
 
     Parameter
     ---------
-    index : a scalar, integer :class:`evaluable.Array`
+    index : a scalar, integer :class:`nutils.evaluable.Array`
         The index of the transform chains to return.
 
     Returns
     -------
-    :class:`evaluable.TransformChain`
+    :class:`nutils.transform.EvaluableTransformChain`
         The evaluable transform chains at the given ``index``.
     '''
 
-    return evaluable.TransformChainFromSequence(self, index)
+    return _EvaluableTransformChainsFromSequence(self, index)
+
+  def evaluable_index_with_tail(self, chains: transform.EvaluableTransformChains) -> Tuple[evaluable.Array, transform.EvaluableTransformChains]:
+    index_tails = _EvaluableIndexWithTails(self, chains)
+    index = evaluable.ArrayFromTuple(index_tails, 0, (), int)
+    tails = _EvaluableTransformChainsFromTuple(index_tails, 1, self.get_evaluable(index).fromdims, chains.fromdims)
+    return index, tails
 
 stricttransforms = types.strict[Transforms]
 
@@ -1000,5 +1007,39 @@ def chain(items, todims, fromdim):
     return unchained[0]
   else:
     return ChainedTransforms(unchained)
+
+class _EvaluableTransformChainsFromSequence(transform.EvaluableTransformChains):
+
+  __slots__ = '_sequence'
+
+  def __init__(self, sequence: Transforms, index: evaluable.Array) -> None:
+    self._sequence = sequence
+    super().__init__((index,), tuple(map(evaluable.Constant, sequence.todims)), (None,)*len(sequence.todims))
+
+  def evalf(self, index: numpy.ndarray) -> transform.TransformChains:
+    return self._sequence[index.__index__()]
+
+class _EvaluableIndexWithTails(evaluable.Evaluable):
+
+  __slots__ = '_sequence'
+
+  def __init__(self, sequence: Transforms, chains: transform.EvaluableTransformChains) -> None:
+    self._sequence = sequence
+    super().__init__((chains,))
+
+  def evalf(self, chains):
+    index, tails = self._sequence.index_with_tail(chains)
+    return numpy.array(index), tails
+
+class _EvaluableTransformChainsFromTuple(transform.EvaluableTransformChains):
+
+  __slots__ = '_index'
+
+  def __init__(self, items: evaluable.Evaluable, index: int, todims: Tuple[Optional[evaluable.Array], ...], fromdims: Tuple[Optional[evaluable.Array], ...]) -> None:
+    self._index = index
+    super().__init__((items,), todims, fromdims)
+
+  def evalf(self, items) -> numpy.ndarray:
+    return items[self._index]
 
 # vim:sw=2:sts=2:et

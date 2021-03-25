@@ -36,8 +36,9 @@ set.
 '''
 
 from . import types, points, util, function, evaluable, parallel, numeric, matrix, transformseq, sparse
+from .transformseq import Transforms
 from .pointsseq import PointsSequence
-from .function import Space
+from .function import Space, LowerData
 import numpy, numbers, collections.abc, os, treelog as log, abc
 
 graphviz = os.environ.get('NUTILS_GRAPHVIZ')
@@ -152,15 +153,6 @@ class Sample(types.Singleton):
     '''
 
     raise NotImplementedError
-
-  def _lower_for_loop(self, func, **kwargs):
-    if kwargs.pop('transform_chains', None) or kwargs.pop('coordinates', None):
-      raise ValueError('nested integrals or samples are not yet supported')
-    ielem = evaluable.Argument('_ielem', (), dtype=int)
-    transform_chains = tuple(t.get_evaluable(ielem) for t in self.transforms)
-    coordinates = (self.points.get_evaluable_coords(ielem),) * len(self.transforms)
-    lowered = func.lower(**kwargs, transform_chains=transform_chains, coordinates=coordinates)
-    return ielem, transform_chains, coordinates, lowered
 
   @util.positional_only
   @util.single_or_multiple
@@ -320,6 +312,14 @@ class Sample(types.Singleton):
     transforms = tuple(transform[selection] for transform in self.transforms)
     return Sample.new(self.spaces, transforms, self.points.take(selection))
 
+  def get_lower_data(self, index: evaluable.Array, *, next_token: int = 0) -> LowerData:
+    transform_chains = tuple(seq.get_evaluable(index) for seq in self.transforms)
+    tip_coords = self.points.get_evaluable_coords(index)
+    lower_data = LowerData.from_unfactorized_evaluables(self.spaces, transform_chains[0], tip_coords, next_token)
+    if len(transform_chains) == 2:
+      lower_data = lower_data.with_opposite(LowerData.from_unfactorized_evaluables(self.spaces, transform_chains[1], tip_coords, next_token))
+    return lower_data
+
 strictsample = types.strict[Sample]
 
 class _DefaultIndex(Sample):
@@ -442,20 +442,24 @@ class _Integral(function.Array):
     self._sample = sample
     super().__init__(shape=integrand.shape, dtype=float if integrand.dtype in (bool, int) else integrand.dtype, spaces=frozenset(()))
 
-  def lower(self, **kwargs):
-    ielem, transform_chains, coordinates, integrand = self._sample._lower_for_loop(self._integrand, **kwargs)
-    rootdim = self._sample.transforms[0].todim
-    manifolddim = int(coordinates[0].shape[-1])
-    assert manifolddim <= rootdim
-    J = evaluable.TransformExtendedLinear(transform_chains[0], rootdim)[:,:manifolddim]
-    assert evaluable.equalshape(J.shape, (rootdim, manifolddim))
-    if manifolddim == rootdim:
+  def lower(self, parent_lower_data: LowerData) -> evaluable.Array:
+    ielem = evaluable.Argument('_sample_index_{}'.format(parent_lower_data.next_token), (), int)
+    lower_data = self._sample.get_lower_data(ielem, next_token=parent_lower_data.next_token)
+    lower_data = parent_lower_data.product(lower_data)
+    integrand = self._integrand.lower(lower_data)
+    weights = evaluable.prependaxes(self._sample.points.get_evaluable_weights(ielem), parent_lower_data.shape)
+    weights = evaluable.appendaxes(weights, integrand.shape[weights.ndim:])
+    J = self._sample.transforms[0].get_evaluable(ielem).extended_linear[:,:self._sample.points.ndims]
+    assert evaluable.equalshape(J.shape, (self._sample.transforms[0].todim, self._sample.points.ndims))
+    if self._sample.transforms[0].todim == self._sample.points.ndims:
       detJ = evaluable.abs(evaluable.determinant(J))
     else:
-      JTJ = evaluable.dot(evaluable.insertaxis(J, 1, manifolddim), evaluable.insertaxis(J, 2, manifolddim), 0)
+      JTJ = evaluable.matmat(evaluable.swapaxes(J, -2, -1), J)
       detJ = evaluable.sqrt(evaluable.abs(evaluable.determinant(JTJ)))
+    detJ = evaluable.prependaxes(detJ, lower_data.shape)
+    detJ = evaluable.appendaxes(detJ, integrand.shape[detJ.ndim:])
     integrand *= detJ
-    contracted = evaluable.dot(evaluable.appendaxes(self._sample.points.get_evaluable_weights(ielem), integrand.shape[1:]), integrand, 0)
+    contracted = evaluable.dot(weights, integrand, tuple(range(len(parent_lower_data.shape), len(lower_data.shape))))
     return evaluable.LoopSum(contracted, ielem, self._sample.nelems)
 
 class _AtSample(function.Array):
@@ -467,8 +471,11 @@ class _AtSample(function.Array):
     self._sample = sample
     super().__init__(shape=(sample.points.npoints, *func.shape), dtype=func.dtype, spaces=frozenset(()))
 
-  def lower(self, **kwargs) -> evaluable.Array:
-    ielem, transform_chains, coordinates, func = self._sample._lower_for_loop(self._func, **kwargs)
+  def lower(self, parent_lower_data: LowerData) -> evaluable.Array:
+    ielem = evaluable.Argument('_sample_index_{}'.format(parent_lower_data.next_token), (), int)
+    lower_data = self._sample.get_lower_data(ielem, next_token=parent_lower_data.next_token)
+    lower_data = parent_lower_data.product(lower_data)
+    func = self._func.lower(lower_data)
     indices = self._sample.get_evaluable_indices(ielem)
     inflated = evaluable.Transpose.from_end(evaluable.Inflate(evaluable.Transpose.to_end(func, 0), indices, self._sample.npoints), 0)
     return evaluable.LoopSum(inflated, ielem, self._sample.nelems)
@@ -479,10 +486,9 @@ class _Basis(function.Array):
     self._sample = sample
     super().__init__(shape=(sample.npoints,), dtype=float, spaces=frozenset(sample.spaces))
 
-  def lower(self, *, transform_chains=(), coordinates=(), **kwargs):
-    assert transform_chains and coordinates and len(transform_chains) == len(coordinates)
-    index, tail = evaluable.TransformsIndexWithTail(self._sample.transforms[0], transform_chains[0])
-    coords = evaluable.ApplyTransforms(tail, coordinates[0], self.shape[0])
+  def lower(self, lower_data: LowerData) -> evaluable.Array:
+    index = lower_data.get_index(self._sample.spaces, self._sample.transforms[0])
+    coords = lower_data.get_local_coords(self._sample.spaces, self._sample.transforms[0])
     expect = self._sample.points.get_evaluable_coords(index)
     sampled = evaluable.Sampled(coords, expect)
     indices = self._sample.get_evaluable_indices(index)
