@@ -2968,6 +2968,19 @@ class LocalCoords(DerivativeTargetBase):
   def evalf(self):
     raise Exception('LocalCoords should not be evaluated')
 
+class IdentifierDerivativeTarget(DerivativeTargetBase):
+  'identifier derivative target'
+
+  __slots__ = 'identifier'
+
+  @types.apply_annotations
+  def __init__(self, identifier, shape:asshape):
+    self.identifier = identifier
+    super().__init__(args=[], shape=shape, dtype=float)
+
+  def evalf(self):
+    raise Exception('{} cannot be evaluabled'.format(type(self).__name__))
+
 class Ravel(Array):
 
   __slots__ = 'func'
