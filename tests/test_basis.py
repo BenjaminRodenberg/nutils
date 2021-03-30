@@ -268,16 +268,17 @@ class unstructured_topology(TestCase):
       nverts = 25
     elif self.variant == 'tensor':
       structured, geom = mesh.rectilinear([numpy.linspace(0, 1, 5-i) for i in range(self.ndims)])
-      domain = topology.ConnectedTopology(structured.references, structured.transforms, structured.opposites, structured.connectivity)
+      domain = topology.ConnectedTopology(structured.spaces, structured.references, structured.transforms, structured.opposites, structured.connectivity)
       nverts = numpy.product([5-i for i in range(self.ndims)])
     elif self.variant == 'simplex':
       numpy.random.seed(0)
       nverts = 20
       simplices = numeric.overlapping(numpy.arange(nverts), n=self.ndims+1)
       coords = numpy.random.normal(size=(nverts, self.ndims))
+      space = function.Space('test', self.ndims)
       root = transform.Identifier(self.ndims, 'test')
       transforms = transformseq.PlainTransforms([transform.TransformChain(root, transform.Square((c[1:]-c[0]).T, c[0])) for c in coords[simplices]], self.ndims, self.ndims)
-      domain = topology.SimplexTopology(simplices, transforms, transforms)
+      domain = topology.SimplexTopology(space, simplices, transforms, transforms)
       geom = function.rootcoords(self.ndims)
     else:
       raise NotImplementedError

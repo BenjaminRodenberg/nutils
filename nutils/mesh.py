@@ -56,9 +56,10 @@ def rectilinear(richshape, periodic=(), name='rect'):
       shape.append(len(v)-1)
       uniform = False
 
+  space = function.Space('X', ndims)
   root = transform.Identifier(ndims, name)
   axes = [transformseq.DimAxis(i=0, j=n, mod=n if idim in periodic else 0, isperiodic=idim in periodic) for idim, n in enumerate(shape)]
-  topo = topology.StructuredTopology(root, axes)
+  topo = topology.StructuredTopology(space, root, axes)
 
   if uniform:
     if all(o == offset[0] for o in offset[1:]):
@@ -73,7 +74,7 @@ def rectilinear(richshape, periodic=(), name='rect'):
 
   return topo, geom
 
-def line(nodes, periodic=False, bnames=None):
+def line(nodes, periodic=False, bnames=None, *, name: str = 'X'):
   if isinstance(nodes, int):
     uniform = True
     assert nodes > 0
@@ -85,8 +86,9 @@ def line(nodes, periodic=False, bnames=None):
     scale = (nodes[-1]-nodes[0]) / nelems
     offset = nodes[0]
     uniform = numpy.equal(nodes, offset + numpy.arange(nelems+1) * scale).all()
+  space = function.Space(name, 1)
   root = transform.Identifier(1, 'line')
-  domain = topology.StructuredLine(root, 0, nelems, periodic=periodic, bnames=bnames)
+  domain = topology.StructuredLine(space, root, 0, nelems, periodic=periodic, bnames=bnames)
   geom = function.rootcoords(1) * scale + offset if uniform else domain.basis('std', degree=1, periodic=False).dot(nodes)
   return domain, geom
 
@@ -96,7 +98,7 @@ def newrectilinear(nodes, periodic=None, bnames=[['left','right'],['bottom','top
   else:
     periodic = numpy.asarray(periodic)
     assert len(periodic) == len(nodes) and periodic.ndim == 1 and periodic.dtype == bool
-  dims = [line(nodesi, periodici, bnamesi) for nodesi, periodici, bnamesi in zip(nodes, periodic, tuple(bnames)+(None,)*len(nodes))]
+  dims = [line(nodesi, periodici, bnamesi) for nodesi, periodici, bnamesi, namei in zip(nodes, periodic, tuple(bnames)+(None,)*len(nodes))]
   domain, geom = dims.pop(0)
   for domaini, geomi in dims:
     domain = domain * domaini
@@ -545,8 +547,9 @@ def simplex(nodes, cnodes, coords, tags, btags, ptags, name='simplex'):
   assert numpy.greater(nodes[:,1:], nodes[:,:-1]).all(), 'nodes must be sorted'
   assert ncnodes == _comb(ndims + degree, degree), 'number of coordinate nodes does not correspond to uniformly refined simplex'
 
+  space = function.Space('X', ndims)
   transforms = transformseq.IdentifierTransforms(ndims=ndims, name=name, length=nelems)
-  topo = topology.SimplexTopology(nodes, transforms, transforms)
+  topo = topology.SimplexTopology(space, nodes, transforms, transforms)
   coeffs = element.getsimplex(ndims).get_poly_coeffs('lagrange', degree=degree)
   basis = function.PlainBasis([coeffs] * nelems, cnodes, nverts, topo.f_index, topo.f_coords)
   geom = (basis[:,_] * coords).sum(0)
@@ -569,7 +572,7 @@ def simplex(nodes, cnodes, coords, tags, btags, ptags, name='simplex'):
       if simplices:
         transforms = transformseq.PlainTransforms(transforms, ndims, ndims-1)
         opposites = transforms if opposites is None else transformseq.PlainTransforms(opposites, ndims, ndims-1)
-        groups[name] = topology.SimplexTopology(simplices, transforms, opposites)
+        groups[name] = topology.SimplexTopology(space, simplices, transforms, opposites)
 
   pgroups = {}
   if ptags:
@@ -578,7 +581,7 @@ def simplex(nodes, cnodes, coords, tags, btags, ptags, name='simplex'):
     for pname, inodes in ptags.items():
       ptransforms = transformseq.PlainTransforms([topo.transforms[ielem][0].append(ptrans[ivertex]) for inode in inodes for ielem, ivertex in pmap[inode]], ndims, 0)
       preferences = References.uniform(element.getsimplex(0), len(ptransforms))
-      pgroups[pname] = topology.Topology(preferences, ptransforms, ptransforms)
+      pgroups[pname] = topology.Topology((space,), preferences, ptransforms, ptransforms)
 
   vgroups = {}
   for name, ielems in tags.items():
@@ -586,7 +589,7 @@ def simplex(nodes, cnodes, coords, tags, btags, ptags, name='simplex'):
       vgroups[name] = topo.withgroups(bgroups=bgroups, igroups=igroups, pgroups=pgroups)
       continue
     transforms = topo.transforms[ielems]
-    vtopo = topology.SimplexTopology(nodes[ielems], transforms, transforms)
+    vtopo = topology.SimplexTopology(space, nodes[ielems], transforms, transforms)
     keep = numpy.zeros(nelems, dtype=bool)
     keep[ielems] = True
     vbgroups = {}
@@ -617,12 +620,12 @@ def simplex(nodes, cnodes, coords, tags, btags, ptags, name='simplex'):
         if simplices:
           transforms = transformseq.PlainTransforms(transforms, ndims, ndims-1)
           opposites = transformseq.PlainTransforms(opposites, ndims, ndims-1) if len(opposites) == len(transforms) else transforms
-          groups[bname] = topology.SimplexTopology(simplices, transforms, opposites)
+          groups[bname] = topology.SimplexTopology(space, simplices, transforms, opposites)
     vpgroups = {}
     for pname, inodes in ptags.items():
       ptransforms = transformseq.PlainTransforms([topo.transforms[ielem][0].append(ptrans[ivertex]) for inode in inodes for ielem, ivertex in pmap[inode] if keep[ielem]], ndims, 0)
       preferences = References.uniform(element.getsimplex(0), len(ptransforms))
-      vpgroups[pname] = topology.Topology(preferences, ptransforms, ptransforms)
+      vpgroups[pname] = topology.Topology((space,), preferences, ptransforms, ptransforms)
     vgroups[name] = vtopo.withgroups(bgroups=vbgroups, igroups=vigroups, pgroups=vpgroups)
 
   return topo.withgroups(vgroups=vgroups, bgroups=bgroups, igroups=igroups, pgroups=pgroups), geom
@@ -662,10 +665,11 @@ def unitsquare(nelems, etype):
       The geometry function.
   '''
 
+  space = function.Space('X', 2)
   root = transform.Identifier(2, 'unitsquare')
 
   if etype == 'square':
-    topo = topology.StructuredTopology(root, [transformseq.DimAxis(i=0, j=nelems, mod=0, isperiodic=False)] * 2)
+    topo = topology.StructuredTopology(space, root, [transformseq.DimAxis(i=0, j=nelems, mod=0, isperiodic=False)] * 2)
 
   elif etype in ('triangle', 'mixed'):
     simplices = numpy.concatenate([
@@ -675,7 +679,7 @@ def unitsquare(nelems, etype):
     v = numpy.arange(nelems+1, dtype=float)
     coords = numeric.meshgrid(v, v).reshape(2,-1).T
     transforms = transformseq.PlainTransforms([transform.TransformChain(root, transform.Square((c[1:]-c[0]).T, c[0])) for c in coords[simplices]], 2, 2)
-    topo = topology.SimplexTopology(simplices, transforms, transforms)
+    topo = topology.SimplexTopology(space, simplices, transforms, transforms)
 
     if etype == 'mixed':
       references = list(topo.references)
@@ -689,7 +693,7 @@ def unitsquare(nelems, etype):
         transforms[n*2:(n+1)*2] = transform.TransformChain(root, transform.Shift([float(i),float(j)])),
         connectivity[n*2:(n+1)*2] = numpy.concatenate(connectivity[n*2:(n+1)*2])[[3,2,4,1] if i%2==j%2 else [3,2,0,5]],
         connectivity = [c-numpy.greater(c,n*2) for c in connectivity]
-      topo = topology.ConnectedTopology(References.from_iter(references, 2), transformseq.PlainTransforms(transforms, 2, 2), transformseq.PlainTransforms(transforms, 2, 2), connectivity)
+      topo = topology.ConnectedTopology((space,), References.from_iter(references, 2), transformseq.PlainTransforms(transforms, 2, 2), transformseq.PlainTransforms(transforms, 2, 2), connectivity)
 
     x, y = topo.boundary.sample('_centroid', None).eval(function.rootcoords(2)).T
     bgroups = dict(left=x==0, right=x==nelems, bottom=y==0, top=y==nelems)
