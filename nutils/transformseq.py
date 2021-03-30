@@ -20,7 +20,7 @@
 
 """The transformseq module."""
 
-from . import types, numeric, util, transform, element, warnings
+from . import types, numeric, util, transform, element, warnings, evaluable
 from .elementseq import References
 import abc, itertools, operator, numpy, functools
 
@@ -324,6 +324,22 @@ class Transforms(types.Singleton):
     '''
 
     yield self
+
+  def get_evaluable(self, index: evaluable.Array) -> evaluable.TransformChain:
+    '''Return the evaluable transform chain at the given index.
+
+    Parameter
+    ---------
+    index : a scalar, integer :class:`evaluable.Array`
+        The index of the transform chains to return.
+
+    Returns
+    -------
+    :class:`evaluable.TransformChain`
+        The evaluable transform chains at the given ``index``.
+    '''
+
+    return evaluable.TransformChainFromSequence(self, index)
 
 stricttransforms = types.strict[Transforms]
 
