@@ -195,7 +195,7 @@ class Topology(types.Singleton):
     transforms = self.transforms,
     if len(self.transforms) == 0 or self.opposites != self.transforms:
       transforms += self.opposites,
-    return Sample.new(transforms, points)
+    return Sample.new(self.spaces, transforms, points)
 
   @util.single_or_multiple
   def integrate_elementwise(self, funcs, *, degree, asfunction=False, ischeme='gauss', arguments=None):
@@ -591,7 +591,7 @@ class Topology(types.Singleton):
     points_ = PointsSequence.from_iter([points.CoordsPoints(coords[s]) for s in slices] if weights is None
                else [points.CoordsWeightsPoints(coords[s], weights[s]) for s in slices], self.ndims)
 
-    return Sample.new(transforms, points_, index)
+    return Sample.new(self.spaces, transforms, points_, index)
 
   def revolved(self, geom):
     '''Create revolved topology, geometry.'''
