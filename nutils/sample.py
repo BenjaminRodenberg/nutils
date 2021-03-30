@@ -152,7 +152,7 @@ class Sample(types.Singleton):
       raise ValueError('nested integrals or samples are not yet supported')
     ielem = evaluable.Argument('_ielem', (), dtype=int)
     return ielem, func.lower(**kwargs,
-      transform_chains=tuple(evaluable.TransformChainFromSequence(t, ielem) for t in self.transforms),
+      transform_chains=tuple(t.get_evaluable(ielem) for t in self.transforms),
       coordinates=(self.points.get_evaluable_coords(ielem),) * len(self.transforms))
 
   @util.positional_only

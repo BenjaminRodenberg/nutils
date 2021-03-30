@@ -309,7 +309,7 @@ class Topology(types.Singleton):
       W = numpy.zeros(onto.shape[0])
       I = numpy.zeros(onto.shape[0], dtype=bool)
       ielem_arg = evaluable.Argument('_project_index', (), dtype=int)
-      lower_args = dict(transform_chains=(evaluable.TransformChainFromSequence(self.transforms, ielem_arg), evaluable.TransformChainFromSequence(self.opposites, ielem_arg)), coordinates=(self.references.getpoints('bezier', 2).get_evaluable_coords(ielem_arg),)*2)
+      lower_args = dict(transform_chains=(self.transforms.get_evaluable(ielem_arg), self.opposites.get_evaluable(ielem_arg)), coordinates=(self.references.getpoints('bezier', 2).get_evaluable_coords(ielem_arg),)*2)
       fun = function.lower(**lower_args)
       data = evaluable.Tuple(evaluable.Tuple([fun, onto_f.simplified, evaluable.Tuple(onto_ind)]) for onto_ind, onto_f in evaluable.blocks(onto.lower(**lower_args))).optimized_for_numpy
       for ielem in range(len(self)):
@@ -368,7 +368,7 @@ class Topology(types.Singleton):
     refs = []
     if leveltopo is None:
       ielem_arg = evaluable.Argument('_trim_index', (), dtype=int)
-      levelset = levelset.lower(transform_chains=(evaluable.TransformChainFromSequence(self.transforms, ielem_arg), evaluable.TransformChainFromSequence(self.opposites, ielem_arg)), coordinates=(self.references.getpoints('vertex', maxrefine).get_evaluable_coords(ielem_arg),)*2).optimized_for_numpy
+      levelset = levelset.lower(transform_chains=(self.transforms.get_evaluable(ielem_arg), self.opposites.get_evaluable(ielem_arg)), coordinates=(self.references.getpoints('vertex', maxrefine).get_evaluable_coords(ielem_arg),)*2).optimized_for_numpy
       with log.iter.percentage('trimming', range(len(self)), self.references) as items:
         for ielem, ref in items:
           levels = levelset.eval(_trim_index=ielem, **arguments)
@@ -530,9 +530,7 @@ class Topology(types.Singleton):
     _ielem = evaluable.Argument('_locate_ielem', shape=(), dtype=int)
     _point = evaluable.Argument('_locate_point', shape=(self.ndims,))
     lower_args = dict(
-      transform_chains = (
-        evaluable.TransformChainFromSequence(self.transforms, _ielem),
-        evaluable.TransformChainFromSequence(self.opposites, _ielem)),
+      transform_chains = (self.transforms.get_evaluable(_ielem), self.opposites.get_evaluable(_ielem)),
       coordinates = (_point, _point))
     xJ = evaluable.Tuple((geom.lower(**lower_args), function.localgradient(geom, self.ndims).lower(**lower_args))).simplified
     arguments = dict(arguments or ())

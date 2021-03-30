@@ -1102,7 +1102,7 @@ class CommonBasis:
   def test_lower(self):
     ref = element.PointReference() if self.basis.coords.shape[0] == 0 else element.LineReference()**self.basis.coords.shape[0]
     points = ref.getpoints('bezier', 4)
-    lowered = self.basis.lower(transform_chains=(evaluable.TransformChainFromSequence(self.checktransforms, evaluable.Argument('ielem', (), int)),), coordinates=(evaluable.Constant(points.coords),))
+    lowered = self.basis.lower(transform_chains=(self.checktransforms.get_evaluable(evaluable.Argument('ielem', (), int)),), coordinates=(evaluable.Constant(points.coords),))
     with _builtin_warnings.catch_warnings():
       _builtin_warnings.simplefilter('ignore', category=evaluable.ExpensiveEvaluationWarning)
       for ielem in range(self.checknelems):
