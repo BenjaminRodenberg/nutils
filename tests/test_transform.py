@@ -93,3 +93,57 @@ class SimplexChild(TestInvertible):
     super().setUp(trans=transform.SimplexChild(3, 1), linear=numpy.eye(3)/2, offset=[.5,0,0])
 
 del TestTransform, TestInvertible, TestUpdim
+
+
+class TestEvaluableTransformChain:
+
+  # requires attributes `echain`, `chain` and `evalargs`
+
+  def test_evalf(self):
+    self.assertEqual(self.echain.eval(**self.evalargs), self.chain)
+
+  def test_todim(self):
+    self.assertEqual(self.echain.todim.eval(**self.evalargs), self.chain.todim)
+
+  def test_fromdim(self):
+    self.assertEqual(self.echain.fromdim.eval(**self.evalargs), self.chain.fromdim)
+
+  def test_linear(self):
+    self.assertAllAlmostEqual(self.echain.linear.eval(**self.evalargs), self.chain.linear)
+
+  def test_linear_derivative(self):
+    self.assertTrue(evaluable.iszero(evaluable.derivative(self.echain.linear, evaluable.Argument('test', ())).simplified))
+
+  def test_extended_linear(self):
+    self.assertAllAlmostEqual(self.echain.extended_linear.eval(**self.evalargs), self.chain.extended_linear)
+
+  def test_extended_linear_derivative(self):
+    self.assertTrue(evaluable.iszero(evaluable.derivative(self.echain.extended_linear, evaluable.Argument('test', ())).simplified))
+
+  def test_apply(self):
+    todim, fromdim = evaluable.Tuple((self.echain.todim, self.echain.fromdim)).eval(**self.evalargs)
+    epoints = evaluable.Argument('points', (5, self.echain.fromdim), float)
+    points = numpy.linspace(0, 1, 5*fromdim).reshape(5, fromdim)
+    self.assertAllAlmostEqual(self.echain.apply(epoints).eval(points=points, **self.evalargs), self.chain.apply(points))
+
+  def test_apply_derivative(self):
+    todim, fromdim = evaluable.Tuple((self.echain.todim, self.echain.fromdim)).eval(**self.evalargs)
+    epoints = evaluable.Argument('points', (5, self.echain.fromdim), float)
+    points = numpy.linspace(0, 1, 5*fromdim).reshape(5, fromdim)
+    actual = evaluable.derivative(self.echain.apply(epoints), epoints).eval(**self.evalargs)
+    desired = numpy.einsum('jk,iklm->ijlm', self.chain.linear, numpy.eye(5*fromdim).reshape(5, fromdim, 5, fromdim))
+    self.assertAllAlmostEqual(actual, desired)
+
+class TestEvaluableTransformChainArgumentWithoutDim(TestCase, TestEvaluableTransformChain):
+
+  def setUp(self):
+    self.echain = transform.EvaluableTransformChain.from_argument('chain')
+    self.chain = transform.TransformChain(transform.SimplexEdge(2, 0))
+    self.evalargs = dict(chain=self.chain)
+
+class TestEvaluableTransformChainArgumentWithDim(TestCase, TestEvaluableTransformChain):
+
+  def setUp(self):
+    self.echain = transform.EvaluableTransformChain.from_argument('chain', todim=2, fromdim=1)
+    self.chain = transform.TransformChain(transform.SimplexEdge(2, 0))
+    self.evalargs = dict(chain=self.chain)

@@ -48,7 +48,7 @@ if typing.TYPE_CHECKING:
 else:
   Protocol = object
 
-from . import debug_flags, util, types, numeric, cache, transform, expression, warnings, parallel, sparse
+from . import debug_flags, util, types, numeric, cache, expression, warnings, parallel, sparse
 from ._graph import Node, RegularNode, DuplicatedLeafNode, InvisibleNode, Subgraph
 import numpy, sys, itertools, functools, operator, inspect, numbers, builtins, re, types as builtin_types, abc, collections.abc, math, treelog as log, weakref, time, contextlib, subprocess
 _ = numpy.newaxis
@@ -636,7 +636,8 @@ class SelectBifurcation(TransformChain):
   def evalf(self, trans):
     assert isinstance(trans, tuple)
     bf = trans[0]
-    assert isinstance(bf, transform.Bifurcate)
+    from transform import Bifurcate
+    assert isinstance(bf, Bifurcate)
     selected = bf.trans1 if self.first else bf.trans2
     return selected + trans[1:]
 

@@ -22,8 +22,9 @@
 The transform module.
 """
 
-from typing import Iterator, Optional
-from . import cache, numeric, util, types, warnings
+from typing import Iterator, Optional, Union, Tuple, Dict
+from . import cache, numeric, util, types, warnings, evaluable
+from .evaluable import Evaluable, Array
 import numpy, collections, itertools, functools, operator
 _ = numpy.newaxis
 
@@ -994,5 +995,153 @@ class TransformChains:
     for chain, s in zip(self._chains, self._toslices):
       linear[s, s] = chain.extended_linear
     return linear
+
+## EVALUABLE TRANSFORM CHAIN
+
+def _as_optional_evaluable_dim(dim: Optional[Union[int, Array]]) -> Optional[Array]:
+  if dim is None:
+    return None
+  elif isinstance(dim, int):
+    if dim < 0:
+      raise ValueError('expected a non-negative integer but got {}'.format(dim))
+    return evaluable.Constant(dim)
+  elif isinstance(dim, Array):
+    if dim.dtype != int or dim.ndim != 0:
+      raise ValueError('expected a scalar integer array but got {}'.format(dim))
+    return dim
+  else:
+    raise ValueError('expected None, a non-negative integer or a scalar integer array but got {}'.format(dim))
+
+def _check_optional_evaluable_dim(dim: Optional[Array]) -> None:
+  if not (dim is None or isinstance(dim, Array) and dim.ndim == 0 and dim.dtype == int):
+    raise ValueError('expected None or a scalar integer array but got {}'.format(dim))
+
+class EvaluableTransformChain(Evaluable):
+  'The :class:`~nutils.evaluable.Evaluable` equivalent of a :class:`TransformChain`.'
+
+  __slots__ = '_todim', '_fromdim'
+
+  @staticmethod
+  def from_argument(name: str, todim: Optional[Union[int, Array]] = None, fromdim: Optional[Union[int, Array]] = None) -> 'EvaluableTransformChain':
+    todim = _as_optional_evaluable_dim(todim)
+    fromdim = _as_optional_evaluable_dim(fromdim)
+    return _TransformChainArgument(name, todim, fromdim)
+
+  def __init__(self, args: Tuple[Evaluable, ...], todim: Optional[Array], fromdim: Optional[Array]) -> None:
+    _check_optional_evaluable_dim(todim)
+    _check_optional_evaluable_dim(fromdim)
+    self._todim = todim
+    self._fromdim = fromdim
+    super().__init__(args)
+
+  @property
+  def todim(self) -> Array:
+    if self._todim is None:
+      return _ToDim(self)
+    else:
+      return self._todim
+
+  @property
+  def fromdim(self) -> Array:
+    if self._fromdim is None:
+      return _FromDim(self)
+    else:
+      return self._fromdim
+
+  @property
+  def linear(self) -> Array:
+    return _Linear(self)
+
+  @property
+  def extended_linear(self) -> Array:
+    return _ExtendedLinear(self)
+
+  def apply(self, coords: Array) -> Array:
+    return _Apply(self, coords)
+
+class _ToDim(Array):
+
+  __slots__ = ()
+
+  def __init__(self, chain: EvaluableTransformChain) -> None:
+    super().__init__(args=(chain,), shape=(), dtype=int)
+
+  def evalf(self, chain: TransformChain) -> numpy.ndarray:
+    return numpy.array(chain.todim)
+
+class _FromDim(Array):
+
+  __slots__ = ()
+
+  def __init__(self, chain: EvaluableTransformChain) -> None:
+    super().__init__(args=(chain,), shape=(), dtype=int)
+
+  def evalf(self, chain: TransformChain) -> numpy.ndarray:
+    return numpy.array(chain.fromdim)
+
+class _Linear(Array):
+
+  __slots__ = ()
+
+  def __init__(self, chain: EvaluableTransformChain) -> None:
+    super().__init__(args=(chain,), shape=(chain.todim, chain.fromdim), dtype=float)
+
+  def evalf(self, chain: TransformChain) -> numpy.ndarray:
+    return chain.linear
+
+  def _derivative(self, var: evaluable.DerivativeTargetBase, seen: Dict[Evaluable, Evaluable]) -> Array:
+    return evaluable.zeros(self.shape+var.shape, dtype=float)
+
+class _ExtendedLinear(Array):
+
+  __slots__ = ()
+
+  def __init__(self, chain: EvaluableTransformChain) -> None:
+    super().__init__(args=(chain,), shape=(chain.todim, chain.todim), dtype=float)
+
+  def evalf(self, chain: TransformChain) -> numpy.ndarray:
+    return chain.extended_linear
+
+  def _derivative(self, var: evaluable.DerivativeTargetBase, seen: Dict[Evaluable, Evaluable]) -> Array:
+    return evaluable.zeros(self.shape+var.shape, dtype=float)
+
+class _Apply(Array):
+
+  __slots__ = '_chain', '_points'
+
+  def __init__(self, chain: EvaluableTransformChain, points: Array) -> None:
+    if points.ndim == 0:
+      raise ValueError('expected a points array with at least one axis but got {}'.format(points))
+    if not evaluable.equalindex(chain.fromdim, points.shape[-1]):
+      raise ValueError('the last axis of points does not match the from dimension of the transform chain')
+    self._chain = chain
+    self._points = points
+    super().__init__(args=(chain, points), shape=(*points.shape[:-1], chain.todim), dtype=float)
+
+  def evalf(self, chain: TransformChain, points: numpy.ndarray) -> numpy.ndarray:
+    return chain.apply(points)
+
+  def _derivative(self, var: evaluable.DerivativeTargetBase, seen: Dict[Evaluable, Evaluable]) -> Array:
+    axis = self._points.ndim - 1
+    linear = evaluable.appendaxes(evaluable.prependaxes(self._chain.linear, self._points.shape[:-1]), var.shape)
+    dpoints = evaluable.insertaxis(evaluable.derivative(self._points, var, seen), axis, linear.shape[axis])
+    return evaluable.dot(linear, dpoints, axis+1)
+
+class _TransformChainArgument(EvaluableTransformChain):
+
+  __slots__ = '_name'
+
+  def __init__(self, name: str, todim: Optional[Array], fromdim: Optional[Array]) -> None:
+    self._name = name
+    super().__init__((evaluable.EVALARGS,), todim, fromdim)
+
+  def evalf(self, evalargs) -> TransformChain:
+    chain = evalargs[self._name]
+    assert isinstance(chain, TransformChain)
+    return chain
+
+  @property
+  def arguments(self):
+    return frozenset({self})
 
 # vim:sw=2:sts=2:et
