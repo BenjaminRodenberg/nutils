@@ -134,6 +134,46 @@ class TestEvaluableTransformChain:
     desired = numpy.einsum('jk,iklm->ijlm', self.chain.linear, numpy.eye(5*fromdim).reshape(5, fromdim, 5, fromdim))
     self.assertAllAlmostEqual(actual, desired)
 
+class TestEvaluableTransformChains(TestEvaluableTransformChain):
+
+  def test_nchains(self):
+    self.assertEqual(self.echain.nchains, self.chain.nchains)
+
+  def test_len(self):
+    self.assertEqual(len(self.echain), self.chain.nchains)
+
+  def test_get_chain(self):
+    for i in range(len(self.chain)):
+      self.assertEqual(self.echain.get_chain(i).eval(**self.evalargs), self.chain.get_chain(i))
+
+  def test_getitem(self):
+    for i in range(len(self.chain)):
+      self.assertEqual(self.echain[i].eval(**self.evalargs), self.chain.get_chain(i))
+
+  def test_iter(self):
+    echains = tuple(iter(self.echain))
+    self.assertEqual(len(echains), self.chain.nchains)
+    for echain, chain in zip(echains, self.chain):
+      self.assertEqual(echain.eval(**self.evalargs), chain)
+
+  def test_reversed(self):
+    echains = tuple(reversed(self.echain))
+    self.assertEqual(len(echains), self.chain.nchains)
+    for echain, chain in zip(echains, reversed(self.chain)):
+      self.assertEqual(echain.eval(**self.evalargs), chain)
+
+  def todims(self):
+    etodims = self.echain.todims
+    self.assertEqual(len(etodims), self.chain.nchains)
+    for etodim, todim in zip(etodims, self.chain.todims):
+      self.assertEqual(etodim.eval(**self.evalargs), todim)
+
+  def fromdims(self):
+    efromdims = self.echain.fromdims
+    self.assertEqual(len(efromdims), len(self.chain))
+    for efromdim, fromdim in zip(efromdims, self.chain.fromdims):
+      self.assertEqual(efromdim.eval(**self.evalargs), fromdim)
+
 class TestEvaluableTransformChainArgumentWithoutDim(TestCase, TestEvaluableTransformChain):
 
   def setUp(self):
@@ -147,3 +187,28 @@ class TestEvaluableTransformChainArgumentWithDim(TestCase, TestEvaluableTransfor
     self.echain = transform.EvaluableTransformChain.from_argument('chain', todim=2, fromdim=1)
     self.chain = transform.TransformChain(transform.SimplexEdge(2, 0))
     self.evalargs = dict(chain=self.chain)
+
+class TestEvaluableTransformChainsArgumentWithoutDim(TestCase, TestEvaluableTransformChains):
+
+  def setUp(self):
+    self.echain = transform.EvaluableTransformChains.from_argument('chain', (None, None))
+    self.chain = transform.TransformChains(transform.TransformChain(transform.Identity(2)), transform.TransformChain(transform.SimplexEdge(2, 0)))
+    self.evalargs = dict(chain=self.chain)
+
+class TestEvaluableTransformChainsArgumentWithDim(TestCase, TestEvaluableTransformChains):
+
+  def setUp(self):
+    self.echain = transform.EvaluableTransformChains.from_argument('chain', (2, 2), (2, 1))
+    self.chain = transform.TransformChains(transform.TransformChain(transform.Identity(2)), transform.TransformChain(transform.SimplexEdge(2, 0)))
+    self.evalargs = dict(chain=self.chain)
+
+class TestEvaluableTransformChainsJoin(TestCase, TestEvaluableTransformChains):
+
+  def setUp(self):
+    echain1 = transform.EvaluableTransformChain.from_argument('chain1', todim=2, fromdim=2)
+    echain2 = transform.EvaluableTransformChain.from_argument('chain2', todim=2, fromdim=1)
+    chain1 = transform.TransformChain(transform.Identity(2))
+    chain2 = transform.TransformChain(transform.SimplexEdge(2, 0))
+    self.echain = transform.EvaluableTransformChains.from_individual_chains(echain1, echain2)
+    self.chain = transform.TransformChains(chain1, chain2)
+    self.evalargs = dict(chain1=chain1, chain2=chain2)

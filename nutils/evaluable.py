@@ -2893,7 +2893,7 @@ class Argument(DerivativeTargetBase):
       raise ValueError('argument {!r} missing'.format(self._name))
     else:
       value = numpy.asarray(value)
-      assert equalshape(value.shape, self.shape)
+      #assert equalshape(value.shape, self.shape)
       value = value.astype(self.dtype, casting='safe', copy=False)
       return value
 
