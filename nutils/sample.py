@@ -313,7 +313,7 @@ class Sample(types.Singleton):
     return Sample.new(self.spaces, transforms, self.points.take(selection))
 
   def get_lower_data(self, index: evaluable.Array, *, next_token: int = 0) -> LowerData:
-    transform_chains = tuple(seq.get_evaluable(index) for seq in self.transforms)
+    transform_chains = tuple(seq.get_evaluable_chains(index) for seq in self.transforms)
     tip_coords = self.points.get_evaluable_coords(index)
     lower_data = LowerData.from_unfactorized_evaluables(self.spaces, transform_chains[0], tip_coords, next_token)
     if len(transform_chains) == 2:
@@ -436,8 +436,6 @@ def _convert(data, inplace=False):
 class _Integral(function.Array):
 
   def __init__(self, integrand: function.Array, sample: Sample) -> None:
-    if len(integrand.spaces) > 1:
-      raise NotImplementedError
     self._integrand = integrand
     self._sample = sample
     super().__init__(shape=integrand.shape, dtype=float if integrand.dtype in (bool, int) else integrand.dtype, spaces=frozenset(()))
@@ -449,7 +447,7 @@ class _Integral(function.Array):
     integrand = self._integrand.lower(lower_data)
     weights = evaluable.prependaxes(self._sample.points.get_evaluable_weights(ielem), parent_lower_data.shape)
     weights = evaluable.appendaxes(weights, integrand.shape[weights.ndim:])
-    J = self._sample.transforms[0].get_evaluable(ielem).extended_linear[:,:self._sample.points.ndims]
+    J = self._sample.transforms[0].get_evaluable_chains(ielem).extended_linear[:,:self._sample.points.ndims]
     assert evaluable.equalshape(J.shape, (self._sample.transforms[0].todim, self._sample.points.ndims))
     if self._sample.transforms[0].todim == self._sample.points.ndims:
       detJ = evaluable.abs(evaluable.determinant(J))

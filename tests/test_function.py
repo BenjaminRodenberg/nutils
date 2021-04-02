@@ -1106,7 +1106,7 @@ class CommonBasis:
     assert len(self.checktransforms.todims) == 1
     spaces = tuple(function.Space(chr(ord('A')+i), dim) for i, dim in enumerate(self.checktransforms.todims))
     ielem_arg = evaluable.Argument('ielem', (), int)
-    lower_data = function.LowerData.from_unfactorized_evaluables(spaces, self.checktransforms.get_evaluable(ielem_arg), evaluable.Constant(points.coords), 0)
+    lower_data = function.LowerData.from_unfactorized_evaluables(spaces, self.checktransforms.get_evaluable_chains(ielem_arg), evaluable.Constant(points.coords), 0)
     lowered = self.basis.lower(lower_data)
     with _builtin_warnings.catch_warnings():
       _builtin_warnings.simplefilter('ignore', category=evaluable.ExpensiveEvaluationWarning)

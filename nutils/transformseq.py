@@ -326,11 +326,11 @@ class Transforms(types.Singleton):
 
     yield self
 
-  def get_evaluable(self, index: evaluable.Array) -> transform.EvaluableTransformChains:
+  def get_evaluable_chains(self, index: evaluable.Array) -> transform.EvaluableTransformChains:
     '''Return the evaluable transform chain at the given index.
 
-    Parameter
-    ---------
+    Parameters
+    ----------
     index : a scalar, integer :class:`nutils.evaluable.Array`
         The index of the transform chains to return.
 
@@ -345,7 +345,7 @@ class Transforms(types.Singleton):
   def evaluable_index_with_tail(self, chains: transform.EvaluableTransformChains) -> Tuple[evaluable.Array, transform.EvaluableTransformChains]:
     index_tails = _EvaluableIndexWithTails(self, chains)
     index = evaluable.ArrayFromTuple(index_tails, 0, (), int)
-    tails = _EvaluableTransformChainsFromTuple(index_tails, 1, self.get_evaluable(index).fromdims, chains.fromdims)
+    tails = _EvaluableTransformChainsFromTuple(index_tails, 1, self.get_evaluable_chains(index).fromdims, chains.fromdims)
     return index, tails
 
 stricttransforms = types.strict[Transforms]

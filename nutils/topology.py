@@ -317,9 +317,9 @@ class Topology(types.Singleton):
       I = numpy.zeros(onto.shape[0], dtype=bool)
       ielem_arg = evaluable.Argument('_project_index', (), dtype=int)
       coords = self.references.getpoints('bezier', 2).get_evaluable_coords(ielem_arg)
-      lower_data = function.LowerData.from_unfactorized_evaluables(self.spaces, self.transforms.get_evaluable(ielem_arg), coords, 0)
+      lower_data = function.LowerData.from_unfactorized_evaluables(self.spaces, self.transforms.get_evaluable_chains(ielem_arg), coords, 0)
       if self.opposites != self.transforms:
-        lower_data = lower_data.with_opposite(function.LowerData.from_unfactorized_evaluables(self.spaces, self.opposites.get_evaluable(ielem_arg), coords, 0))
+        lower_data = lower_data.with_opposite(function.LowerData.from_unfactorized_evaluables(self.spaces, self.opposites.get_evaluable_chains(ielem_arg), coords, 0))
       fun = function.lower(lower_data)
       data = evaluable.Tuple(evaluable.Tuple([fun, onto_f.simplified, evaluable.Tuple(onto_ind)]) for onto_ind, onto_f in evaluable.blocks(onto.lower(lower_data))).optimized_for_numpy
       for ielem in range(len(self)):
@@ -542,9 +542,9 @@ class Topology(types.Singleton):
     points = parallel.shempty((len(coords),len(geom)), dtype=float)
     _ielem = evaluable.Argument('_locate_ielem', shape=(), dtype=int)
     _point = evaluable.Argument('_locate_point', shape=(self.ndims,))
-    lower_data = function.LowerData.from_unfactorized_evaluables(self.spaces, self.transforms.get_evaluable(_ielem), _point, 0)
+    lower_data = function.LowerData.from_unfactorized_evaluables(self.spaces, self.transforms.get_evaluable_chains(_ielem), _point, 0)
     if self.opposites != self.transforms:
-      lower_data = lower_data.with_opposite(function.LowerData.from_unfactorized_evaluables(self.spaces, self.opposites.get_evaluable(_ielem), _point, 0))
+      lower_data = lower_data.with_opposite(function.LowerData.from_unfactorized_evaluables(self.spaces, self.opposites.get_evaluable_chains(_ielem), _point, 0))
     xJ = evaluable.Tuple((geom.lower(lower_data), function.derivative(geom, function.Argument('_locate_point', (self.ndims,), dtype=float)).lower(lower_data))).simplified
     arguments = dict(arguments or ())
     with parallel.ctxrange('locating', len(coords)) as ipoints:

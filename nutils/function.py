@@ -94,9 +94,9 @@ class Coords:
     self.derivative_target = derivative_target
 
   def append_axes(self, shape: Tuple[evaluable.Array, ...]) -> 'Coords':
-    tip = evaluable.Transpose.to_end(evaluable.appendaxes(self._tip, shape), self.tip.ndim-1)
+    tip = evaluable.Transpose.to_end(evaluable.appendaxes(self.tip, shape), self.tip.ndim-1)
     root = evaluable.Transpose.to_end(evaluable.appendaxes(self.root, shape), self.root.ndim-1)
-    return Coords(tip, root, derivative_target)
+    return Coords(tip, root, self.derivative_target)
 
   def prepend_axes(self, shape: Tuple[evaluable.Array, ...]) -> 'Coords':
     tip = evaluable.prependaxes(self.tip, shape)
@@ -198,7 +198,7 @@ class LowerData:
     for basis in self.bases:
       if frozenset(basis.spaces) <= spaces:
         bases.append(basis)
-      elif not frozenset(basis.spacse).isdisjoint(spaces):
+      elif not frozenset(basis.spaces).isdisjoint(spaces):
         raise ValueError
     return tuple(bases)
 
@@ -207,7 +207,7 @@ class LowerData:
 
     chains = EvaluableTransformChains.from_individual_chains(*(self.transform_chains[space] for space in spaces))
     index, tails = transforms.evaluable_index_with_tail(chains)
-    heads = transforms.get_evaluable(index)
+    heads = transforms.get_evaluable_chains(index)
     combined_local_coords = evaluable.zeros((*self.shape, transforms.fromdim), dtype=float)
     offset = 0
     for ispace, space in enumerate(spaces):
@@ -238,11 +238,11 @@ class _LowerDataProduct(LowerData):
       raise ValueError('Cannot multiply the two `LowerData` objects because both use one or more of the same tokens.')
     self._data1 = data1
     self._data2 = data2
-    transform_chains = {space: transform_chain for space, transform_chain in data1.transform_chains}
-    transform_chains.update(data2.transform_chains)
+    transform_chains = {space: transform_chain for space, transform_chain in data1.transform_chains.items()}
+    transform_chains.update(data2.transform_chains.items())
     coords = {space: coords.append_axes(data2.shape) for space, coords in data1.coords.items()}
     coords.update({space: coords.prepend_axes(data1.shape) for space, coords in data2.coords.items()})
-    bases = tuple(basis.append_axes(data2.shape) for basis in data1.bases if not any(space in data2.spaces for space in basis.spaces))
+    bases = tuple(basis.append_axes(data2.shape) for basis in data1.bases if not any(space in data2.transform_chains for space in basis.spaces))
     bases += tuple(basis.prepend_axes(data1.shape) for basis in data2.bases)
     super().__init__(transform_chains, coords, bases, data1.shape+data2.shape, data1.ninterfaces+data2.ninterfaces, builtins.max(data1.next_token, data2.next_token), data1.used_tokens|data2.used_tokens)
 
@@ -385,8 +385,6 @@ class Array(Lowerable, metaclass=_ArrayMeta):
     self.shape = tuple(shape_)
     self.dtype = dtype
     self.spaces = frozenset(spaces)
-    if len(spaces) > 1:
-      raise NotImplementedError('multiple spaces are not yet supported')
 
   def as_evaluable_array(self) -> evaluable.Array:
     return self.lower(LowerData.empty())
